@@ -1,0 +1,17 @@
+{
+  "name": "pc-service",
+  "version": "0.1.0",
+  "description": "Service compagnon Couch Stream App (obs-websocket, Twitch, WebSocket local)",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "check-obs": "node scripts/check-obs.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^18.0.2",
+    "obs-websocket-js": "^5.0.8"
+  }
+}
