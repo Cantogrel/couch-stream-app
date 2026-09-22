@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Couch Stream App</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header id="topbar">
+  <span id="statusDot" class="dot disconnected"></span>
+  <span id="statusText">déconnecté</span>
+  <span id="liveBadge" class="live-badge hidden">● LIVE</span>
+</header>
+
+<main>
+
+  <section id="tab-dashboard" class="tab active">
+    <div class="card">
+      <div class="card-title">Aperçu du live</div>
+      <img id="livePreview" class="live-preview" alt="Aperçu de la scène programme OBS">
+      <div id="livePreviewStatus" class="stat-sub"></div>
+    </div>
+
+    <div class="card">
+      <div class="stream-row">
+        <div>
+          <div class="stat-label">Stream</div>
+          <div id="streamState" class="stat-value">hors ligne</div>
+          <div id="streamDuration" class="stat-sub"></div>
+        </div>
+        <button id="streamToggleBtn" class="big-btn">Démarrer</button>
+      </div>
+      <div class="health-row">
+        <div class="health-item"><span id="droppedFrames">–</span><small>frames perdues</small></div>
+        <div class="health-item"><span id="totalFrames">–</span><small>frames totales</small></div>
+        <div class="health-item"><span id="congestion">–</span><small>congestion</small></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Scènes</div>
+      <div id="scenes" class="scene-grid"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Micro OBS (source)</div>
+      <div class="row-between">
+        <span id="obsMicState" class="stat-value">–</span>
+        <button id="obsMicToggleBtn" class="btn">Muter/Démuter</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-chat" class="tab">
+    <div id="chatLog" class="chat-log"></div>
+    <form id="chatForm" class="chat-input-row">
+      <input type="text" id="chatInput" placeholder="Message…" autocomplete="off">
+      <button type="submit" class="btn">Envoyer</button>
+    </form>
+  </section>
+
+  <section id="tab-mic" class="tab">
+    <div class="card">
+      <div class="card-title">Envoi micro (WebRTC → OBS)</div>
+      <p class="hint">Capture le micro de ce téléphone et l'envoie au PC pour
+        injection dans VB-Cable, indépendamment de la source OBS ci-contre.</p>
+      <label class="field">Source micro
+        <select id="micDeviceSelect"><option value="">Micro par défaut</option></select>
+      </label>
+      <div id="meter"><div id="meterBar"></div></div>
+      <button id="micSendBtn" class="big-btn full">Démarrer l'envoi</button>
+      <div id="micSendStatus" class="stat-sub"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Source OBS (Micro Téléphone)</div>
+      <div class="row-between">
+        <span id="micTabMuteState" class="stat-value">–</span>
+        <button id="micTabMuteBtn" class="btn">Muter/Démuter</button>
+      </div>
+      <label class="field">
+        Volume (<span id="micVolumeValue">–</span>%)
+        <input type="range" id="micVolumeSlider" min="0" max="100" value="100">
+      </label>
+    </div>
+  </section>
+
+  <section id="tab-settings" class="tab">
+    <div class="card">
+      <div class="card-title">Connexion</div>
+      <label class="field">Hôte PC
+        <input type="text" id="cfgHost" placeholder="192.168.1.x">
+      </label>
+      <label class="field">Port
+        <input type="text" id="cfgPort" placeholder="8765">
+      </label>
+      <label class="field">Token
+        <input type="password" id="cfgToken" placeholder="LOCAL_WS_TOKEN">
+      </label>
+      <button id="saveConnBtn" class="btn full">Enregistrer et connecter</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Notifications</div>
+      <label class="switch-row">
+        <span>Notifier à chaque message du chat</span>
+        <input type="checkbox" id="cfgNotifChat">
+      </label>
+      <label class="field">
+        Cooldown entre deux notifs (secondes)
+        <input type="number" id="cfgNotifCooldown" min="10" max="300" value="45">
+      </label>
+      <p class="hint">La toute première activité déclenche une notif
+        immédiatement ; ensuite, au plus une notif par cooldown même si
+        plusieurs messages arrivent.</p>
+      <label class="switch-row">
+        <span>Mentions (mots-clés, jamais de cooldown)</span>
+        <input type="checkbox" id="cfgNotifMentions">
+      </label>
+      <label class="field">
+        Mots-clés (séparés par des virgules)
+        <input type="text" id="cfgMentionKeywords" placeholder="pseudo, autre_pseudo">
+      </label>
+      <button id="notifPermBtn" class="btn full">Activer les notifications</button>
+      <button id="notifTestBtn" class="btn full">Tester une notification</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Journal</div>
+      <div id="log" class="log"></div>
+    </div>
+  </section>
+
+</main>
+
+<nav id="tabbar">
+  <button class="tab-btn active" data-tab="dashboard">Tableau de bord</button>
+  <button class="tab-btn" data-tab="chat">Chat</button>
+  <button class="tab-btn" data-tab="mic">Micro</button>
+  <button class="tab-btn" data-tab="settings">Réglages</button>
+</nav>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

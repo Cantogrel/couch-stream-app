@@ -16,7 +16,10 @@ async function main() {
   const chat = new TwitchChat({ channelLogin: config.twitch.channelLogin, tokenManager });
 
   const pcmPlayer = new PcmPlayer({ deviceLabelMatch: config.audio.outputDeviceLabel, jitterBufferMs: config.audio.jitterBufferMs });
-  await pcmPlayer.start();
+  // Vérifie que VB-Cable est bien présent dès le boot (échec rapide et
+  // clair), mais n'ouvre le flux audio natif qu'à la demande, pendant un
+  // envoi micro actif (voir wsServer.js) — pas en continu depuis le boot.
+  await pcmPlayer.resolveDevice();
 
   // Le serveur s'abonne aux évènements obs/chat AVANT que ces derniers ne se
   // connectent, pour ne pas rater les évènements "status" initiaux.

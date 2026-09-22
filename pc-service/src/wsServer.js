@@ -14,6 +14,10 @@ export class LocalWsServer {
     this.pcmPlayer = pcmPlayer;
     this.wss = null;
     this.authedClients = new Set();
+    // Le flux audio natif n'est ouvert que pendant qu'au moins un client
+    // envoie son micro — voir pcmPlayer.js pour pourquoi (gel possible au
+    // redémarrage d'OBS si tenu ouvert en continu).
+    this.activeMicCount = 0;
   }
 
   start() {
@@ -31,6 +35,7 @@ export class LocalWsServer {
     this.obs.on('status', (status) => this._broadcast({ type: 'event', name: 'obs.connection', ...status }));
     this.chat.on('message', (msg) => this._broadcast({ type: 'event', name: 'chat.message', ...msg }));
     this.chat.on('status', (status) => this._broadcast({ type: 'event', name: 'twitch.connection', ...status }));
+    this.chat.on('message-deleted', (payload) => this._broadcast({ type: 'event', name: 'chat.message_deleted', ...payload }));
 
     console.log(`[http+ws] public/ + serveur local en écoute sur le port ${this.port}`);
   }
@@ -60,8 +65,19 @@ export class LocalWsServer {
     ws.on('close', () => {
       clearTimeout(conn.authTimer);
       this.authedClients.delete(ws);
-      conn.micReceiver?.close();
+      this._closeMicReceiver(conn);
     });
+  }
+
+  _closeMicReceiver(conn) {
+    if (!conn.micReceiver) return;
+    conn.micReceiver.close();
+    conn.micReceiver = null;
+    this.activeMicCount--;
+    if (this.activeMicCount <= 0) {
+      this.activeMicCount = 0;
+      this.pcmPlayer.stop().catch((err) => console.error('[audio] fermeture sortie micro échouée:', err.message));
+    }
   }
 
   async _handleMessage(ws, raw, conn) {
@@ -84,6 +100,10 @@ export class LocalWsServer {
         } catch (err) {
           ws.send(JSON.stringify({ type: 'error', error: `état OBS indisponible: ${err.message}` }));
         }
+        // Sans ça, un client qui recharge la page perd tout le chat déjà
+        // affiché (retour utilisateur Phase 3) — rejoué une fois à la
+        // connexion, pas à chaque commande.
+        ws.send(JSON.stringify({ type: 'chat-history', messages: this.chat.getHistory() }));
       } else {
         ws.close(4003, 'auth invalide');
       }
@@ -99,7 +119,16 @@ export class LocalWsServer {
     if (msg.type === 'webrtc-offer') {
       // Une nouvelle offre remplace toute connexion audio précédente de ce
       // client (ex. le téléphone rouvre l'app après une coupure réseau).
-      conn.micReceiver?.close();
+      this._closeMicReceiver(conn);
+
+      try {
+        await this.pcmPlayer.start();
+      } catch (err) {
+        ws.send(JSON.stringify({ type: 'error', error: `sortie audio indisponible: ${err.message}` }));
+        return;
+      }
+      this.activeMicCount++;
+
       conn.micReceiver = new MicReceiver({
         pcmPlayer: this.pcmPlayer,
         onIceCandidate: (candidate) => ws.send(JSON.stringify({ type: 'webrtc-ice', candidate })),
@@ -110,6 +139,7 @@ export class LocalWsServer {
         ws.send(JSON.stringify({ type: 'webrtc-answer', sdp }));
       } catch (err) {
         ws.send(JSON.stringify({ type: 'error', error: `offre WebRTC refusée: ${err.message}` }));
+        this._closeMicReceiver(conn);
       }
       return;
     }
@@ -124,8 +154,7 @@ export class LocalWsServer {
     }
 
     if (msg.type === 'webrtc-hangup') {
-      conn.micReceiver?.close();
-      conn.micReceiver = null;
+      this._closeMicReceiver(conn);
     }
   }
 
@@ -153,6 +182,10 @@ export class LocalWsServer {
         return { muted: await this.obs.toggleMic() };
       case 'obs.setMicMuted':
         return this.obs.setMicMuted(Boolean(payload.muted));
+      case 'obs.setMicVolume':
+        return this.obs.setMicVolume(Number(payload.volume));
+      case 'obs.getScreenshot':
+        return { dataUrl: await this.obs.getScreenshot() };
 
       case 'chat.send':
         return this.chat.sendMessage(payload.message);

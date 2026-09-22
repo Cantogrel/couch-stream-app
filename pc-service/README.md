@@ -33,8 +33,17 @@ Service Node.js tournant à côté d'OBS Studio.
   / `webrtc-ice` / `webrtc-hangup`.
 - Pas de serveur STUN/TURN (LAN only, candidats host suffisent).
 
-Pas encore implémenté : UI mobile (Phase 3+), réglage fin des niveaux
-(Phase 5).
+Pas encore implémenté : réglage fin des niveaux (Phase 5).
+
+## Phase 3 (implémentée, à valider sur téléphone)
+
+- `src/staticServer.js` sert désormais `../mobile-app/www` en racine
+  (`/` → `index.html`, l'app réelle : tableau de bord, scènes, chat avec
+  modération, envoi micro WebRTC, réglages/notifications), avec repli sur
+  `public/` pour les anciens clients de test (`/test.html`,
+  `/test-audio.html`, toujours joignables par leur nom de fichier).
+- Aucune commande/endpoint ajouté côté service : l'UI Phase 3 consomme le
+  même protocole WebSocket que les clients de test (Phase 1/2).
 
 ### Tester la Phase 2 avant toute UI mobile
 

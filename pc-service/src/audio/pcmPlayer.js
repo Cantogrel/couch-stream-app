@@ -20,9 +20,13 @@ export class PcmPlayer {
     this.jitterBufferMs = jitterBufferMs;
     this.ctx = null;
     this.nextTime = 0;
+    this.device = null;
   }
 
-  async start() {
+  // Validation à froid (énumère les périphériques, n'ouvre aucun flux) —
+  // appelée une fois au boot pour échouer vite si VB-Cable n'est pas
+  // configuré, sans dépendre d'un premier envoi micro pour le découvrir.
+  async resolveDevice() {
     const devices = await mediaDevices.enumerateDevices();
     const device = devices.find(
       (d) => d.kind === 'audiooutput' && d.label.includes(this.deviceLabelMatch),
@@ -36,6 +40,19 @@ export class PcmPlayer {
         `Périphérique de lecture introuvable (recherché: "${this.deviceLabelMatch}"). Disponibles: ${available}`,
       );
     }
+    this.device = device;
+    return device;
+  }
+
+  // Ouvre le flux audio natif — tenu ouvert seulement pendant un envoi micro
+  // actif (voir wsServer.js, compteur de sessions), pas en continu depuis le
+  // boot : un AudioContext cpal gardé ouvert 24/7 s'est révélé être le point
+  // de gel le plus probable au redémarrage d'OBS (le seul composant natif
+  // actif en permanence, indépendamment de toute activité micro réelle) —
+  // voir bug-20260922-service-freeze-obs-restart dans le vault.
+  async start() {
+    if (this.ctx) return; // déjà démarré (ex. deux clients qui se relaient)
+    const device = this.device || (await this.resolveDevice());
 
     // 'interactive' (déjà la valeur par défaut du spec) demande explicitement
     // au backend audio de minimiser la latence plutôt que d'optimiser pour
