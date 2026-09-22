@@ -36,48 +36,55 @@ export class LocalWsServer {
   }
 
   _handleConnection(ws) {
-    const authTimer = setTimeout(() => {
-      ws.close(4001, 'auth timeout');
-    }, AUTH_TIMEOUT_MS);
+    const conn = {
+      authed: false,
+      authTimer: setTimeout(() => ws.close(4001, 'auth timeout'), AUTH_TIMEOUT_MS),
+      // Sérialise les commandes d'un même client : sans ça, deux commandes
+      // envoyées coup sur coup (ex. double-tap) s'exécutent en parallèle
+      // côté OBS/Twitch et peuvent terminer dans le désordre.
+      queue: Promise.resolve(),
+    };
 
-    let authed = false;
-
-    ws.on('message', async (raw) => {
-      let msg;
-      try {
-        msg = JSON.parse(raw.toString());
-      } catch {
-        return ws.send(JSON.stringify({ type: 'error', error: 'JSON invalide' }));
-      }
-
-      if (!authed) {
-        if (msg.type === 'auth' && msg.token === this.token) {
-          authed = true;
-          clearTimeout(authTimer);
-          this.authedClients.add(ws);
-          ws.send(JSON.stringify({ type: 'welcome' }));
-          try {
-            const state = await this.obs.getState();
-            ws.send(JSON.stringify({ type: 'state', ...state }));
-          } catch (err) {
-            ws.send(JSON.stringify({ type: 'error', error: `état OBS indisponible: ${err.message}` }));
-          }
-        } else {
-          ws.close(4003, 'auth invalide');
-        }
-        return;
-      }
-
-      if (msg.type === 'command') {
-        const result = await this._runCommand(msg.action, msg.payload || {});
-        ws.send(JSON.stringify({ type: 'result', id: msg.id, ...result }));
-      }
+    ws.on('message', (raw) => {
+      conn.queue = conn.queue.then(() => this._handleMessage(ws, raw, conn));
     });
 
     ws.on('close', () => {
-      clearTimeout(authTimer);
+      clearTimeout(conn.authTimer);
       this.authedClients.delete(ws);
     });
+  }
+
+  async _handleMessage(ws, raw, conn) {
+    let msg;
+    try {
+      msg = JSON.parse(raw.toString());
+    } catch {
+      return ws.send(JSON.stringify({ type: 'error', error: 'JSON invalide' }));
+    }
+
+    if (!conn.authed) {
+      if (msg.type === 'auth' && msg.token === this.token) {
+        conn.authed = true;
+        clearTimeout(conn.authTimer);
+        this.authedClients.add(ws);
+        ws.send(JSON.stringify({ type: 'welcome' }));
+        try {
+          const state = await this.obs.getState();
+          ws.send(JSON.stringify({ type: 'state', ...state }));
+        } catch (err) {
+          ws.send(JSON.stringify({ type: 'error', error: `état OBS indisponible: ${err.message}` }));
+        }
+      } else {
+        ws.close(4003, 'auth invalide');
+      }
+      return;
+    }
+
+    if (msg.type === 'command') {
+      const result = await this._runCommand(msg.action, msg.payload || {});
+      ws.send(JSON.stringify({ type: 'result', id: msg.id, ...result }));
+    }
   }
 
   async _runCommand(action, payload) {
