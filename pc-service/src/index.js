@@ -4,6 +4,7 @@ import { TokenManager } from './twitch/tokenManager.js';
 import { TwitchChat } from './twitch/irc.js';
 import { HelixClient } from './twitch/helix.js';
 import { LocalWsServer } from './wsServer.js';
+import { PcmPlayer } from './audio/pcmPlayer.js';
 
 async function main() {
   const obs = new ObsController(config.obs);
@@ -14,9 +15,12 @@ async function main() {
   const helix = new HelixClient({ clientId: config.twitch.clientId, tokenManager });
   const chat = new TwitchChat({ channelLogin: config.twitch.channelLogin, tokenManager });
 
+  const pcmPlayer = new PcmPlayer({ deviceLabelMatch: config.audio.outputDeviceLabel, jitterBufferMs: config.audio.jitterBufferMs });
+  await pcmPlayer.start();
+
   // Le serveur s'abonne aux évènements obs/chat AVANT que ces derniers ne se
   // connectent, pour ne pas rater les évènements "status" initiaux.
-  const server = new LocalWsServer({ port: config.localWs.port, token: config.localWs.token, obs, chat, helix });
+  const server = new LocalWsServer({ port: config.localWs.port, token: config.localWs.token, obs, chat, helix, pcmPlayer });
   server.start();
 
   await obs.connect();
@@ -31,7 +35,7 @@ async function main() {
   const shutdown = () => {
     console.log('\nArrêt du service...');
     tokenManager.stop();
-    process.exit(0);
+    pcmPlayer.stop().finally(() => process.exit(0));
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);

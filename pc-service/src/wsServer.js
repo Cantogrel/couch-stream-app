@@ -1,20 +1,27 @@
 import { WebSocketServer } from 'ws';
+import { MicReceiver } from './audio/micReceiver.js';
+import { createStaticServer } from './staticServer.js';
 
 const AUTH_TIMEOUT_MS = 5000;
 
 export class LocalWsServer {
-  constructor({ port, token, obs, chat, helix }) {
+  constructor({ port, token, obs, chat, helix, pcmPlayer }) {
     this.port = port;
     this.token = token;
     this.obs = obs;
     this.chat = chat;
     this.helix = helix;
+    this.pcmPlayer = pcmPlayer;
     this.wss = null;
     this.authedClients = new Set();
   }
 
   start() {
-    this.wss = new WebSocketServer({ port: this.port });
+    // Même port pour les fichiers statiques (public/, testable depuis le
+    // téléphone en HTTP) et le WebSocket (upgrade sur le même serveur HTTP).
+    this.httpServer = createStaticServer();
+    this.wss = new WebSocketServer({ server: this.httpServer });
+    this.httpServer.listen(this.port);
 
     this.wss.on('connection', (ws) => this._handleConnection(ws));
 
@@ -25,7 +32,7 @@ export class LocalWsServer {
     this.chat.on('message', (msg) => this._broadcast({ type: 'event', name: 'chat.message', ...msg }));
     this.chat.on('status', (status) => this._broadcast({ type: 'event', name: 'twitch.connection', ...status }));
 
-    console.log(`[ws] serveur local en écoute sur le port ${this.port}`);
+    console.log(`[http+ws] public/ + serveur local en écoute sur le port ${this.port}`);
   }
 
   _broadcast(payload) {
@@ -43,6 +50,7 @@ export class LocalWsServer {
       // envoyées coup sur coup (ex. double-tap) s'exécutent en parallèle
       // côté OBS/Twitch et peuvent terminer dans le désordre.
       queue: Promise.resolve(),
+      micReceiver: null,
     };
 
     ws.on('message', (raw) => {
@@ -52,6 +60,7 @@ export class LocalWsServer {
     ws.on('close', () => {
       clearTimeout(conn.authTimer);
       this.authedClients.delete(ws);
+      conn.micReceiver?.close();
     });
   }
 
@@ -84,6 +93,39 @@ export class LocalWsServer {
     if (msg.type === 'command') {
       const result = await this._runCommand(msg.action, msg.payload || {});
       ws.send(JSON.stringify({ type: 'result', id: msg.id, ...result }));
+      return;
+    }
+
+    if (msg.type === 'webrtc-offer') {
+      // Une nouvelle offre remplace toute connexion audio précédente de ce
+      // client (ex. le téléphone rouvre l'app après une coupure réseau).
+      conn.micReceiver?.close();
+      conn.micReceiver = new MicReceiver({
+        pcmPlayer: this.pcmPlayer,
+        onIceCandidate: (candidate) => ws.send(JSON.stringify({ type: 'webrtc-ice', candidate })),
+        onStatus: (state) => ws.send(JSON.stringify({ type: 'event', name: 'webrtc.connection', state })),
+      });
+      try {
+        const sdp = await conn.micReceiver.handleOffer(msg.sdp);
+        ws.send(JSON.stringify({ type: 'webrtc-answer', sdp }));
+      } catch (err) {
+        ws.send(JSON.stringify({ type: 'error', error: `offre WebRTC refusée: ${err.message}` }));
+      }
+      return;
+    }
+
+    if (msg.type === 'webrtc-ice') {
+      try {
+        await conn.micReceiver?.addIceCandidate(msg.candidate);
+      } catch (err) {
+        console.error('[audio] candidat ICE refusé:', err.message);
+      }
+      return;
+    }
+
+    if (msg.type === 'webrtc-hangup') {
+      conn.micReceiver?.close();
+      conn.micReceiver = null;
     }
   }
 

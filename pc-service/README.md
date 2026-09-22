@@ -17,8 +17,35 @@ Service Node.js tournant à côté d'OBS Studio.
   authentifié par `LOCAL_WS_TOKEN`), LAN only. Relaie les évènements OBS et
   chat, et route les commandes (`obs.*`, `chat.*`).
 
-Pas encore implémenté : réception audio micro téléphone → VB-Cable
-(Phase 2), UI mobile (Phase 3+).
+## Phase 2 (implémentée, à valider)
+
+- `src/audio/micReceiver.js` — une `RTCPeerConnection` (werift) par client,
+  reçoit l'offre WebRTC du téléphone, répond, relaie les paquets RTP Opus
+  du track audio reçu.
+- `src/audio/opusDecoder.js` — décodage Opus → PCM (opusscript, WASM, pas
+  de compilation native).
+- `src/audio/pcmPlayer.js` — planifie la lecture du PCM décodé vers le
+  périphérique de sortie Windows `CABLE Input (VB-Audio Virtual Cable)`
+  (`node-web-audio-api`, binaire NAPI précompilé, pas de compilation
+  native), avec un petit buffer de gigue (60ms).
+- Signalisation WebRTC ajoutée sur le serveur WebSocket local existant
+  (mêmes port/token que Phase 1) : messages `webrtc-offer` / `webrtc-answer`
+  / `webrtc-ice` / `webrtc-hangup`.
+- Pas de serveur STUN/TURN (LAN only, candidats host suffisent).
+
+Pas encore implémenté : UI mobile (Phase 3+), réglage fin des niveaux
+(Phase 5).
+
+### Tester la Phase 2 avant toute UI mobile
+
+Ouvrir `public/test-audio.html` directement dans un navigateur (double-clic
+ou glisser dans Chrome — pas via un outil d'automatisation, `file://`
+suffit), renseigner port + `LOCAL_WS_TOKEN`, cliquer "Connecter", puis
+"Démarrer l'envoi micro" (autoriser l'accès micro). Parler dans le micro et
+comparer à l'oreille avec le moniteur audio OBS de la source "Micro
+Téléphone (Couch Stream App)" pour juger la latence. Pour un test réaliste
+de la contrainte "en LAN, téléphone → PC", ouvrir la page depuis le
+navigateur du téléphone plutôt que depuis le PC lui-même.
 
 ## Lancer le service
 

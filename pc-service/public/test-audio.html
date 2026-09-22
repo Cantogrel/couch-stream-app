@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Couch Stream App — test audio (Phase 2)</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; background: #111; color: #eee; }
+  h1 { font-size: 1.2rem; }
+  fieldset { border: 1px solid #444; border-radius: 8px; margin-bottom: 1rem; }
+  button { padding: .5rem .8rem; margin: .2rem; cursor: pointer; }
+  input[type=text] { padding: .4rem; margin: .2rem; }
+  label { display: inline-block; margin: .2rem .6rem .2rem 0; }
+  #log { background: #000; color: #0f0; font-family: monospace; font-size: .8rem; height: 200px; overflow-y: auto; padding: .5rem; white-space: pre-wrap; }
+  #status { font-weight: bold; }
+  .connected { color: #4f4; }
+  .disconnected { color: #f44; }
+  #meter { width: 100%; height: 16px; background: #222; border-radius: 4px; overflow: hidden; margin-top: .4rem; }
+  #meterBar { height: 100%; width: 0%; background: #4f4; transition: width .05s linear; }
+</style>
+</head>
+<body>
+<h1>Couch Stream App — test audio micro (Phase 2)</h1>
+<p>
+  Capture le micro de ce navigateur, l'envoie en WebRTC/Opus au service
+  compagnon PC, qui l'injecte dans VB-Cable. Valide manuellement la latence
+  en parlant dans le micro et en écoutant le retour côté OBS (moniteur
+  audio de la source "Micro Téléphone (Couch Stream App)").
+</p>
+
+<fieldset>
+  <legend>Connexion</legend>
+  <input type="text" id="host" placeholder="127.0.0.1" value="127.0.0.1">
+  <input type="text" id="port" placeholder="8765" value="8765">
+  <input type="text" id="token" placeholder="LOCAL_WS_TOKEN" size="40">
+  <button onclick="connect()">Connecter</button>
+  <span id="status" class="disconnected">déconnecté</span>
+</fieldset>
+
+<fieldset>
+  <legend>Micro</legend>
+  <label><input type="checkbox" id="ec"> Écho</label>
+  <label><input type="checkbox" id="ns"> Réduction de bruit</label>
+  <label><input type="checkbox" id="agc"> Gain auto</label>
+  <div>
+    <button onclick="startMic()">Démarrer l'envoi micro</button>
+    <button onclick="stopMic()">Couper</button>
+    <span id="webrtcStatus"></span>
+  </div>
+  <div id="meter"><div id="meterBar"></div></div>
+</fieldset>
+
+<div id="log"></div>
+
+<script>
+let ws, pc, localStream, audioCtx, analyser, meterRaf;
+
+// Servie en http:// (depuis le PC ou le téléphone) : préremplit avec
+// l'hôte/port réels de la page plutôt que le 127.0.0.1 par défaut
+// (pertinent seulement en file://, où la page ne "connaît" pas le PC).
+if (location.protocol.startsWith('http')) {
+  document.getElementById('host').value = location.hostname;
+  if (location.port) document.getElementById('port').value = location.port;
+}
+
+const log = (line) => {
+  const el = document.getElementById('log');
+  el.textContent += line + '\n';
+  el.scrollTop = el.scrollHeight;
+};
+
+// Filet de sécurité : sans ça, une erreur dans un handler onclick="" async
+// (ex. getUserMedia qui échoue) est juste avalée par le navigateur, sans
+// rien afficher — le bouton "ne fait rien" en apparence.
+window.addEventListener('unhandledrejection', (e) => log('[erreur non gérée] ' + (e.reason?.message || e.reason)));
+window.addEventListener('error', (e) => log('[erreur] ' + e.message));
+
+// Diagnostic immédiat : sur une origine non sécurisée (http:// hors
+// localhost), navigator.mediaDevices est carrément absent — getUserMedia
+// échoue avant même de demander la permission.
+if (!window.isSecureContext) {
+  log(`[attention] origine non sécurisée (${location.origin}) — getUserMedia sera indisponible. ` +
+      `Ajoute cette origine exacte dans chrome://flags/#unsafely-treat-insecure-origin-as-secure puis relance Chrome.`);
+} else if (!navigator.mediaDevices?.getUserMedia) {
+  log('[attention] navigator.mediaDevices.getUserMedia indisponible dans ce navigateur.');
+} else {
+  log(`[ok] contexte sécurisé (${location.origin}), micro accessible.`);
+}
+
+function connect() {
+  const host = document.getElementById('host').value;
+  const port = document.getElementById('port').value;
+  const token = document.getElementById('token').value;
+  ws = new WebSocket(`ws://${host}:${port}`);
+
+  ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token }));
+  ws.onclose = (e) => {
+    document.getElementById('status').textContent = 'déconnecté';
+    document.getElementById('status').className = 'disconnected';
+    log(`[fermé] code=${e.code} ${e.reason}`);
+  };
+  ws.onerror = () => log('[erreur websocket]');
+  ws.onmessage = async (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'welcome') {
+      document.getElementById('status').textContent = 'connecté';
+      document.getElementById('status').className = 'connected';
+    } else if (msg.type === 'webrtc-answer') {
+      await pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
+      log('[webrtc] réponse appliquée');
+    } else if (msg.type === 'webrtc-ice') {
+      try { await pc.addIceCandidate(msg.candidate); } catch (err) { log('[webrtc] candidat ICE refusé: ' + err.message); }
+    } else if (msg.type === 'event' && msg.name === 'webrtc.connection') {
+      document.getElementById('webrtcStatus').textContent = msg.state;
+      log('[webrtc] état: ' + msg.state);
+    } else if (msg.type === 'error') {
+      log('[erreur] ' + msg.error);
+    } else {
+      log('[msg] ' + JSON.stringify(msg));
+    }
+  };
+}
+
+// Insère/remplace `a=ptime:` dans la section m=audio d'un SDP (technique
+// standard de tuning bas-latence WebRTC : la valeur par défaut négociée
+// est 20ms).
+function forceOpusPtime(sdp, ptimeMs) {
+  const lines = sdp.split('\r\n');
+  const startIdx = lines.findIndex((l) => l.startsWith('m=audio'));
+  if (startIdx === -1) return sdp;
+  let endIdx = lines.findIndex((l, i) => i > startIdx && l.startsWith('m='));
+  if (endIdx === -1) endIdx = lines.length;
+
+  const before = lines.slice(0, startIdx + 1);
+  const audioSection = lines.slice(startIdx + 1, endIdx).filter((l) => !l.startsWith('a=ptime:'));
+  const after = lines.slice(endIdx);
+
+  return [...before, `a=ptime:${ptimeMs}`, ...audioSection, ...after].join('\r\n');
+}
+
+async function startMic() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return log('[erreur] connecte-toi au service d\'abord');
+
+  try {
+    log('[micro] demande d\'accès...');
+    localStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: document.getElementById('ec').checked,
+        noiseSuppression: document.getElementById('ns').checked,
+        autoGainControl: document.getElementById('agc').checked,
+      },
+    });
+    log('[micro] accès accordé');
+
+    startMeter(localStream);
+
+    pc = new RTCPeerConnection({ iceServers: [] });
+    pc.onicecandidate = (e) => {
+      if (e.candidate) ws.send(JSON.stringify({ type: 'webrtc-ice', candidate: e.candidate.toJSON() }));
+    };
+    pc.onconnectionstatechange = () => log('[webrtc local] état: ' + pc.connectionState);
+    for (const track of localStream.getTracks()) pc.addTrack(track, localStream);
+
+    const offer = await pc.createOffer();
+    // Par défaut WebRTC découpe l'audio en trames de 20ms avant envoi —
+    // demander 10ms réduit d'autant le délai de mise en trame, sans
+    // impact audible sur de la voix (juste un peu plus de paquets/s).
+    const sdp = forceOpusPtime(offer.sdp, 10);
+    await pc.setLocalDescription({ type: 'offer', sdp });
+    ws.send(JSON.stringify({ type: 'webrtc-offer', sdp }));
+    log('[webrtc] offre envoyée (ptime forcé à 10ms)');
+  } catch (err) {
+    log(`[erreur micro] ${err.name}: ${err.message}`);
+  }
+}
+
+function stopMic() {
+  if (pc) { pc.close(); pc = null; }
+  if (localStream) { localStream.getTracks().forEach((t) => t.stop()); localStream = null; }
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'webrtc-hangup' }));
+  stopMeter();
+  document.getElementById('webrtcStatus').textContent = '';
+}
+
+function startMeter(stream) {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const source = audioCtx.createMediaStreamSource(stream);
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 512;
+  source.connect(analyser);
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  const tick = () => {
+    analyser.getByteTimeDomainData(data);
+    let peak = 0;
+    for (const v of data) peak = Math.max(peak, Math.abs(v - 128));
+    document.getElementById('meterBar').style.width = Math.min(100, (peak / 128) * 100) + '%';
+    meterRaf = requestAnimationFrame(tick);
+  };
+  tick();
+}
+
+function stopMeter() {
+  if (meterRaf) cancelAnimationFrame(meterRaf);
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  document.getElementById('meterBar').style.width = '0%';
+}
+</script>
+</body>
+</html>

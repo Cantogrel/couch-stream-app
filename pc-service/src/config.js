@@ -26,4 +26,14 @@ export const config = {
     port: Number(process.env.LOCAL_WS_PORT || 8765),
     token: required('LOCAL_WS_TOKEN'),
   },
+  audio: {
+    // Sous-chaîne du libellé du périphérique de lecture Windows (voir
+    // decision-vbcable-obs-source-via-websocket-api : "CABLE Output" est le
+    // côté capture utilisé par OBS, "CABLE Input" est le côté lecture où ce
+    // service doit injecter l'audio micro reçu du téléphone).
+    outputDeviceLabel: process.env.VBCABLE_OUTPUT_DEVICE_LABEL || 'CABLE Input (VB-Audio Virtual Cable)',
+    // À remonter seulement si des craquements/coupures apparaissent en
+    // pratique (Wi-Fi instable) — plus bas = moins de latence perçue.
+    jitterBufferMs: Number(process.env.AUDIO_JITTER_BUFFER_MS || 30),
+  },
 };
