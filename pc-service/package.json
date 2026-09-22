@@ -5,13 +5,17 @@
   "type": "module",
   "main": "src/index.js",
   "scripts": {
-    "check-obs": "node scripts/check-obs.mjs"
+    "check-obs": "node scripts/check-obs.mjs",
+    "start": "node src/index.js",
+    "test-ws": "node scripts/test-ws-client.mjs"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "dotenv": "^18.0.2",
-    "obs-websocket-js": "^5.0.8"
+    "obs-websocket-js": "^5.0.8",
+    "tmi.js": "^1.8.5",
+    "ws": "^8.21.3"
   }
 }
