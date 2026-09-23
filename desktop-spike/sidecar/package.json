@@ -1,0 +1,1 @@
+{"name":"sidecar","private":true,"type":"module","dependencies":{"node-web-audio-api":"^2.2.0"}}

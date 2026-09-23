@@ -1,0 +1,15 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "CouchSpike",
+  "version": "0.0.1",
+  "identifier": "com.couchstream.spike",
+  "build": { "frontendDist": "../ui" },
+  "app": { "windows": [ { "label": "main", "title": "Couch Spike", "width": 500, "height": 300 } ], "security": { "csp": null } },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico"],
+    "externalBin": ["binaries/node"],
+    "resources": { "../sidecar/": "sidecar/" }
+  }
+}
