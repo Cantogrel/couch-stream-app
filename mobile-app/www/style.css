@@ -388,3 +388,17 @@ main {
 .pc-info.none { color: var(--fg-dim); }
 details.advanced { margin-top: .8rem; }
 details.advanced summary { color: var(--fg-dim); font-size: .8rem; cursor: pointer; margin-bottom: .6rem; }
+
+.qr-view { position: relative; }
+.qr-view video { display: block; }
+.focus-ring {
+  position: absolute;
+  width: 4.5rem;
+  height: 4.5rem;
+  margin: -2.25rem 0 0 -2.25rem;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  pointer-events: none;
+  animation: focusPulse .9s ease-out forwards;
+}
+@keyframes focusPulse { from { transform: scale(1.4); opacity: 1; } to { transform: scale(1); opacity: .2; } }

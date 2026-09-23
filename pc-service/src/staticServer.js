@@ -66,14 +66,14 @@ async function buildPairingData({ devices, identity }) {
   const host = getLanAddress();
   const port = config.localWs.port;
   const payload = JSON.stringify({ v: 2, host, port, pcId: identity.id, name: identity.name, code: devices.createPairingCode() });
-  const qrDataUrl = host ? await QRCode.toDataURL(payload, { margin: 1, scale: 6 }) : null;
+  const qrDataUrl = host ? await QRCode.toDataURL(payload, { margin: 2, scale: 8 }) : null;
   const apk = await findApk();
   const apkUrl = host ? `http://${host}:${port}/app.apk` : null;
   return {
     host,
     port,
     qrDataUrl,
-    apk: apk && apkUrl ? { url: apkUrl, sizeMb: (apk.size / 1048576).toFixed(1), qrDataUrl: await QRCode.toDataURL(apkUrl, { margin: 1, scale: 6 }) } : null,
+    apk: apk && apkUrl ? { url: apkUrl, sizeMb: (apk.size / 1048576).toFixed(1), qrDataUrl: await QRCode.toDataURL(apkUrl, { margin: 2, scale: 8 }) } : null,
   };
 }
 

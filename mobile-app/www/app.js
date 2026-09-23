@@ -610,34 +610,89 @@ const qr = { stream: null, raf: null };
 
 async function startQrScan() {
   try {
-    qr.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    // Résolution élevée : à 640x480 par défaut, un QR affiché sur écran occupe
+    // trop peu de pixels pour rester lisible dès que la mise au point flanche.
+    qr.stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+    });
   } catch (err) {
     return toast('Caméra refusée: ' + err.message);
   }
   $('qrVideo').srcObject = qr.stream;
   $('qrScanner').classList.remove('hidden');
-  $('qrScanStatus').textContent = 'Vise le QR affiché sur le PC…';
+  $('qrScanStatus').textContent = 'Vise le QR affiché sur le PC — touche l\'image pour faire la mise au point.';
+  setupQrCamera(qr.stream.getVideoTracks()[0]);
   tickQrScan();
+}
+
+// Mise au point continue si la caméra la propose, mise au point à la demande
+// en touchant l'image (comme l'appareil photo), et zoom pour scanner de plus
+// loin — un QR d'écran se lit mal de trop près, là où l'autofocus décroche.
+function setupQrCamera(track) {
+  qr.track = track;
+  const caps = track.getCapabilities ? track.getCapabilities() : {};
+  const modes = caps.focusMode || [];
+  const apply = (advanced) => track.applyConstraints({ advanced: [advanced] }).catch(() => {});
+  if (modes.includes('continuous')) apply({ focusMode: 'continuous' });
+
+  const view = document.querySelector('.qr-view');
+  view.onclick = (e) => {
+    const ring = $('qrFocusRing');
+    const r = view.getBoundingClientRect();
+    ring.style.left = e.clientX - r.left + 'px';
+    ring.style.top = e.clientY - r.top + 'px';
+    ring.classList.remove('hidden');
+    ring.style.animation = 'none';
+    void ring.offsetWidth; // relance l'animation
+    ring.style.animation = '';
+    setTimeout(() => ring.classList.add('hidden'), 900);
+    // Relance la mise au point : passage par « single-shot » puis retour en continu.
+    if (modes.includes('single-shot')) {
+      apply({ focusMode: 'single-shot' });
+      if (modes.includes('continuous')) setTimeout(() => apply({ focusMode: 'continuous' }), 1200);
+    } else if (modes.includes('continuous')) {
+      apply({ focusMode: 'manual' });
+      setTimeout(() => apply({ focusMode: 'continuous' }), 150);
+    }
+  };
+
+  const zoom = caps.zoom;
+  $('qrZoomRow').classList.toggle('hidden', !zoom);
+  if (zoom) {
+    const slider = $('qrZoom');
+    slider.min = zoom.min; slider.max = Math.min(zoom.max, 5); slider.step = zoom.step || 0.1;
+    slider.value = zoom.min;
+    slider.oninput = () => apply({ zoom: Number(slider.value) });
+  }
 }
 
 function stopQrScan() {
   if (qr.raf) cancelAnimationFrame(qr.raf);
   qr.raf = null;
   if (qr.stream) { qr.stream.getTracks().forEach((t) => t.stop()); qr.stream = null; }
+  qr.track = null;
   $('qrVideo').srcObject = null;
   $('qrScanner').classList.add('hidden');
 }
 
+// Analyse en 800 px de large max : plus rapide que la pleine résolution (donc
+// plus d'essais par seconde) tout en gardant assez de détail pour le QR.
+const QR_SCAN_MAX_WIDTH = 800;
+let qrLastScanAt = 0;
+
 function tickQrScan() {
   const video = $('qrVideo');
-  if (video.readyState === video.HAVE_ENOUGH_DATA && window.jsQR) {
+  const now = performance.now();
+  if (video.readyState === video.HAVE_ENOUGH_DATA && window.jsQR && now - qrLastScanAt > 80) {
+    qrLastScanAt = now;
     const canvas = $('qrCanvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
+    const scale = Math.min(1, QR_SCAN_MAX_WIDTH / video.videoWidth);
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const code = window.jsQR(imageData.data, imageData.width, imageData.height);
+    const code = window.jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
     if (code) return onQrDecoded(code.data);
   }
   qr.raf = requestAnimationFrame(tickQrScan);
