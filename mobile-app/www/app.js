@@ -51,6 +51,12 @@ const app = {
 
 const $ = (id) => document.getElementById(id);
 
+// Vrai uniquement dans l'app empaquetée (Phase 4) — le pont natif Capacitor
+// s'auto-injecte dans la WebView, absent quand testé dans Chrome (Phase 3).
+function isNative() {
+  return Boolean(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+}
+
 function log(line) {
   const el = $('log');
   el.textContent += line + '\n';
@@ -124,6 +130,7 @@ function handleMessage(msg) {
     case 'welcome':
       setConnected(true);
       log('[connexion] authentifié');
+      startKeepAlive();
       break;
     case 'state':
       applyState(msg);
@@ -470,13 +477,85 @@ $('chatForm').addEventListener('submit', (e) => {
   input.value = '';
 });
 
+// ---------- pont natif (Phase 4) ----------
+
+// Service de premier plan (notification persistante + wake lock) qui garde
+// le process vivant écran éteint / app en arrière-plan, condition posée dès
+// decision-capacitor-plutot-que-pwa. Démarré une fois à la connexion plutôt
+// que par bascule — pas de scénario réel où on veut rester connecté sans
+// vouloir que le chat/micro restent fiables en arrière-plan.
+function startKeepAlive() {
+  if (!isNative() || !window.Capacitor.Plugins.KeepAlive) return;
+  window.Capacitor.Plugins.KeepAlive.start().catch((err) => log('[keepalive] échec: ' + err.message));
+}
+
+// ---------- QR de pairing ----------
+
+const qr = { stream: null, raf: null };
+
+async function startQrScan() {
+  try {
+    qr.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+  } catch (err) {
+    return toast('Caméra refusée: ' + err.message);
+  }
+  $('qrVideo').srcObject = qr.stream;
+  $('qrScanner').classList.remove('hidden');
+  $('qrScanStatus').textContent = 'Vise le QR affiché sur /pair…';
+  tickQrScan();
+}
+
+function stopQrScan() {
+  if (qr.raf) cancelAnimationFrame(qr.raf);
+  qr.raf = null;
+  if (qr.stream) { qr.stream.getTracks().forEach((t) => t.stop()); qr.stream = null; }
+  $('qrVideo').srcObject = null;
+  $('qrScanner').classList.add('hidden');
+}
+
+function tickQrScan() {
+  const video = $('qrVideo');
+  if (video.readyState === video.HAVE_ENOUGH_DATA && window.jsQR) {
+    const canvas = $('qrCanvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = window.jsQR(imageData.data, imageData.width, imageData.height);
+    if (code) return onQrDecoded(code.data);
+  }
+  qr.raf = requestAnimationFrame(tickQrScan);
+}
+
+function onQrDecoded(text) {
+  stopQrScan();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return toast('QR invalide (pas du JSON de pairing)');
+  }
+  if (!data.host || !data.port || !data.token) return toast('QR invalide (champs manquants)');
+  $('cfgHost').value = data.host;
+  $('cfgPort').value = String(data.port);
+  $('cfgToken').value = data.token;
+  toast('Pairing scanné — connexion…');
+  $('saveConnBtn').click();
+}
+
+$('qrScanBtn').addEventListener('click', startQrScan);
+$('qrCancelBtn').addEventListener('click', stopQrScan);
+
 // ---------- notifications ----------
 
-// Enregistré tôt (voir démarrage en bas) : Chrome pour Android impose
+// Web (Chrome, Phase 3) : Chrome pour Android impose
 // `ServiceWorkerRegistration.showNotification()` — le constructeur direct
-// `new Notification()` y lève "Illegal constructor". Voir sw.js.
+// `new Notification()` y lève "Illegal constructor". Voir sw.js. Inutile côté
+// natif (Phase 4), qui passe par @capacitor/local-notifications à la place —
+// plus fiable en arrière-plan, c'est tout l'objet de cette phase.
 async function initServiceWorker() {
-  if (!('serviceWorker' in navigator)) return;
+  if (isNative() || !('serviceWorker' in navigator)) return;
   try {
     app.swRegistration = await navigator.serviceWorker.register('sw.js');
   } catch (err) {
@@ -484,29 +563,105 @@ async function initServiceWorker() {
   }
 }
 
+// Canal + notification postée nativement (KeepAlivePlugin.ensureAlarmChannel
+// / postAlert) plutôt que via l'API JS de @capacitor/local-notifications :
+// il faut USAGE_ALARM (contourne le mode silencieux) et setBypassDnd(true)
+// (contourne Ne pas déranger, si l'utilisateur a accordé l'accès), ni l'un
+// ni l'autre n'est exposé côté JS — et schedule() écrase de toute façon le
+// son du canal avec un son par défaut sur cet appareil (voir postAlert côté
+// natif). Id de canal distinct de l'ancien "chat-alerts" pour repartir propre
+// (un canal Android est immuable une fois créé).
+
+// IDs fixes (pas de Date.now()) : chaque nouvelle alerte remplace la
+// précédente de la même catégorie au lieu de s'empiler. Avec un id qui change
+// à chaque notif, Android finit par les auto-grouper après quelques-unes et
+// n'alerte plus (son/vibration/bannière) que pour le groupe — bug constaté
+// en test réel (12 notifs postées, alerte perçue une seule fois).
+const NOTIF_ID_CHAT = 9001;
+const NOTIF_ID_MENTION = 9002;
+
+async function ensureNotifChannel() {
+  if (!isNative()) return;
+  try {
+    // Nettoyage best-effort de l'ancien canal (Phase 4, avant l'ajout du
+    // contournement DND/silencieux) — un canal orphelin n'est pas grave en
+    // soi, mais autant ne pas laisser deux canaux "alertes chat" dans les
+    // réglages système de l'utilisateur.
+    await window.Capacitor.Plugins.LocalNotifications.deleteChannel({ id: 'chat-alerts' });
+  } catch {
+    // Rien à nettoyer (canal jamais créé sur cet appareil) — normal.
+  }
+  try {
+    await window.Capacitor.Plugins.KeepAlive.ensureAlarmChannel();
+  } catch (err) {
+    log('[notification] création du canal échouée: ' + err.message);
+  }
+}
+
+// Demande la permission au moment où l'utilisateur coche la case dans
+// Réglages plutôt que d'attendre la première notif réelle — sinon la popup
+// système surgit au moment le moins pratique (un message arrive en direct),
+// retour utilisateur explicite.
+async function ensureNotifPermission() {
+  if (isNative()) {
+    const current = await window.Capacitor.Plugins.LocalNotifications.checkPermissions();
+    if (current.display === 'granted') return true;
+    const res = await window.Capacitor.Plugins.LocalNotifications.requestPermissions();
+    return res.display === 'granted';
+  }
+  if (!('Notification' in window)) return false;
+  if (Notification.permission === 'granted') return true;
+  const perm = await Notification.requestPermission();
+  return perm === 'granted';
+}
+
 // Notifie dès le premier message (utile vu le faible volume de messages
 // attendu), puis au plus une fois par cooldown même en cas d'afflux —
-// évite le spam sans jamais rater un premier commentaire.
+// évite le spam sans jamais rater un premier commentaire. Uniquement en
+// live : pas d'alerte à propos d'un chat qui n'intéresse personne hors stream
+// (retour utilisateur explicite).
 function checkChatActivity(msg) {
-  if (!app.settings.notifChat) return;
+  if (!app.settings.notifChat || !app.obs.streaming) {
+    console.log('[notification] checkChatActivity bloqué', { notifChat: app.settings.notifChat, streaming: app.obs.streaming });
+    return;
+  }
   const now = Date.now();
   const cooldownMs = Math.max(1, app.settings.notifCooldownS) * 1000;
-  if (now - app.lastChatNotifAt < cooldownMs) return;
+  const remainingMs = cooldownMs - (now - app.lastChatNotifAt);
+  if (remainingMs > 0) {
+    console.log(`[notification] cooldown actif, encore ${Math.round(remainingMs / 1000)}s`);
+    return;
+  }
   app.lastChatNotifAt = now;
-  notify(`${msg.displayName} dans le chat`, msg.text);
+  console.log('[notification] déclenchement notify() pour chat.message');
+  notify(NOTIF_ID_CHAT, `${msg.displayName} dans le chat`, msg.text);
 }
 
 function checkMention(msg) {
-  if (!app.settings.notifMentions) return;
+  if (!app.settings.notifMentions || !app.obs.streaming) return;
   const keywords = app.settings.mentionKeywords.split(',').map((k) => k.trim().toLowerCase()).filter(Boolean);
   if (!keywords.length) return;
   const text = msg.text.toLowerCase();
   if (keywords.some((k) => text.includes(k))) {
-    notify(`Mention par ${msg.displayName}`, msg.text);
+    notify(NOTIF_ID_MENTION, `Mention par ${msg.displayName}`, msg.text);
   }
 }
 
-async function notify(title, body) {
+async function notify(id, title, body) {
+  if (isNative()) {
+    try {
+      // KeepAlive.postAlert, pas LocalNotifications.schedule() : ce dernier
+      // fixe toujours un son par défaut sur la notification elle-même, qui
+      // prend le pas sur les AudioAttributes/USAGE_ALARM du canal sur cet
+      // appareil — voir le commentaire dans KeepAlivePlugin.postAlert.
+      await window.Capacitor.Plugins.KeepAlive.postAlert({ id, title, body });
+      console.log('[notification] postAlert() ok');
+    } catch (err) {
+      log('[notification] échec native: ' + err.message);
+      console.error('[notification] échec native', err.message, JSON.stringify(err));
+    }
+    return;
+  }
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   if (app.swRegistration) {
     try {
@@ -524,14 +679,24 @@ async function notify(title, body) {
 }
 
 $('notifPermBtn').addEventListener('click', async () => {
-  if (!('Notification' in window)) return toast('Notifications non supportées dans ce navigateur');
-  const perm = await Notification.requestPermission();
-  toast('Permission notifications: ' + perm);
+  const granted = await ensureNotifPermission();
+  toast('Permission notifications: ' + (granted ? 'accordée' : 'refusée'));
 });
 
 $('notifTestBtn').addEventListener('click', () => {
-  notify('Test Couch Stream App', 'Si tu vois ceci, les notifications marchent.');
+  notify(NOTIF_ID_CHAT, 'Test Couch Stream App', 'Si tu vois ceci, les notifications marchent.');
 });
+
+// Demande la permission dès qu'on active une case de notif, pas seulement via
+// le bouton dédié — évite que la popup système n'apparaisse plus tard, en
+// pleine réception d'un message.
+async function onNotifCheckboxChange(e) {
+  if (!e.target.checked) return;
+  const granted = await ensureNotifPermission();
+  if (!granted) toast('Permission notifications refusée — les alertes ne fonctionneront pas');
+}
+$('cfgNotifChat').addEventListener('change', onNotifCheckboxChange);
+$('cfgNotifMentions').addEventListener('change', onNotifCheckboxChange);
 
 // ---------- micro WebRTC (envoi vers le PC) ----------
 
@@ -560,6 +725,11 @@ async function startMicSend() {
         ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
       },
     });
+    // RECORD_AUDIO vient d'être accordée (getUserMedia a réussi) — on relance
+    // le service de premier plan pour qu'il se promeuve au type "microphone"
+    // (voir le commentaire dans KeepAliveService.java : impossible de le
+    // déclarer avant que la permission soit accordée, sur Android 14+).
+    startKeepAlive();
     startMeter(app.mic.stream);
 
     const pc = new RTCPeerConnection({ iceServers: [] });
@@ -698,6 +868,7 @@ $('saveConnBtn').addEventListener('click', () => {
 // ---------- démarrage ----------
 
 initServiceWorker();
+ensureNotifChannel();
 populateSettingsForm();
 populateMicDevices();
 startLivePreview(); // le tableau de bord est l'onglet actif par défaut

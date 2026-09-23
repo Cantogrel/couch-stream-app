@@ -1,0 +1,24 @@
+{
+  "name": "mobile-app",
+  "version": "1.0.0",
+  "description": "App Android empaquetée via Capacitor (UI web + plugin natif micro).",
+  "main": "index.js",
+  "scripts": {
+    "sync": "cap sync android",
+    "open:android": "cap open android",
+    "build:debug": "cd android && ./gradlew assembleDebug",
+    "install:device": "cd android && ./gradlew installDebug"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/local-notifications": "^8.3.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.2"
+  }
+}

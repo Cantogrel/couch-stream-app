@@ -90,6 +90,16 @@
   <section id="tab-settings" class="tab">
     <div class="card">
       <div class="card-title">Connexion</div>
+      <button id="qrScanBtn" class="btn full">Scanner le QR de pairing</button>
+      <div id="qrScanner" class="qr-scanner hidden">
+        <video id="qrVideo" playsinline autoplay muted></video>
+        <div id="qrScanStatus" class="stat-sub"></div>
+        <button id="qrCancelBtn" class="btn full">Annuler</button>
+      </div>
+      <canvas id="qrCanvas" class="hidden"></canvas>
+      <p class="hint">Le QR est affiché par le service PC sur
+        <code>http://&lt;ip-pc&gt;:&lt;port&gt;/pair</code> — remplit hôte/port/token
+        automatiquement, sans les recopier à la main.</p>
       <label class="field">Hôte PC
         <input type="text" id="cfgHost" placeholder="192.168.1.x">
       </label>
@@ -144,6 +154,7 @@
 
 <div id="toast" class="toast hidden"></div>
 
+<script src="lib/jsQR.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

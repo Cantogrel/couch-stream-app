@@ -55,8 +55,9 @@ Virtual Cable, Node.js, Capacitor.
 - **Phase 2 — Pipeline audio micro** : réception WebRTC/Opus, injection
   VB-Cable, validation latence.
 - **Phase 3 — Interface web** (testée directement dans Chrome mobile).
-- **Phase 4 — Empaquetage Capacitor** : foreground service micro natif,
-  notifications, pairing QR code, build APK.
+- **Phase 4 — Empaquetage Capacitor** (clôturée et validée sur téléphone
+  réel) : foreground service micro natif, notifications, pairing QR code,
+  build APK. Voir `mobile-app/README.md`.
 - **Phase 5 — Finitions** : santé du stream, règles de notification,
   réglages audio fins.
 

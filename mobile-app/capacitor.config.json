@@ -1,0 +1,8 @@
+{
+  "appId": "com.lescopaings.couchstream",
+  "appName": "Couch Stream App",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "http"
+  }
+}
