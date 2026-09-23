@@ -66,6 +66,11 @@ Virtual Cable, Node.js, Capacitor.
   réglable depuis le téléphone), bouton de restauration des valeurs par
   défaut. Le redémarrage du service PC est requis
   (nouvelles commandes `obs.getHealth`, `audio.setJitterBuffer`).
+- **Phase 6 — Installation et usage zéro friction** (planifiée) : service PC
+  en vraie app Windows (installeur, tray, démarrage auto), assistant de
+  premier lancement (OBS, VB-Cable intégré, Twitch device code, source
+  micro), pairing sans URL (QR dans l'app + découverte mDNS), robustesse.
+  Voir `docs/PHASE6-PLAN.md`.
 
 Voir aussi le graphe Graphify (`E:\Super IA\Graphify\Couch-Stream-App\graphify-out\`)
 et le vault mémoire (`projects/couch-stream-app/` dans AI-Memory) pour l'état
