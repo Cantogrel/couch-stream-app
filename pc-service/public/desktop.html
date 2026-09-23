@@ -30,7 +30,8 @@
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: .9rem 1rem; }
   .card-title { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); margin-bottom: .6rem; }
 
-  .preview { position: relative; aspect-ratio: 16 / 9; background: #050507; border-radius: 10px; overflow: hidden; }
+  /* Hauteur bornée : l'aperçu doit tenir à l'écran sans scroller. */
+  .preview { position: relative; aspect-ratio: 16 / 9; width: min(100%, calc(42vh * 16 / 9)); margin: 0 auto; background: #050507; border-radius: 10px; overflow: hidden; }
   .preview img { width: 100%; height: 100%; object-fit: contain; display: block; }
   .placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .6rem; text-align: center; padding: 1.5rem; color: var(--dim); background: radial-gradient(circle at 50% 40%, #1b1b22, #0a0a0d); }
   .placeholder svg { width: 3rem; height: 3rem; opacity: .6; }
@@ -72,6 +73,9 @@
   dialog img { display: block; margin: .8rem auto; background: #fff; padding: 10px; border-radius: 8px; width: 240px; height: 240px; }
   dialog p { color: var(--dim); font-size: .85rem; line-height: 1.45; margin: .4rem 0; }
   dialog code { background: #101013; padding: .1rem .4rem; border-radius: 4px; color: var(--fg); }
+  .tabs { display: flex; gap: .3rem; background: #101013; border-radius: 9px; padding: .2rem; margin-bottom: .6rem; }
+  .tabs button { flex: 1; background: none; border: none; border-radius: 7px; padding: .4rem; font-size: .82rem; color: var(--dim); }
+  .tabs button.active { background: #2a2a32; color: var(--fg); }
   .row { display: flex; justify-content: space-between; align-items: center; padding: .4rem 0; border-top: 1px solid var(--border); font-size: .88rem; }
 
   #toast { position: fixed; bottom: 1.2rem; left: 50%; transform: translateX(-50%); background: var(--bad); color: #2a0808; padding: .6rem 1.1rem; border-radius: 8px; font-size: .85rem; z-index: 50; }
@@ -146,7 +150,12 @@
 
 <dialog id="dlg">
   <h2>Téléphone &amp; infos</h2>
+  <div class="tabs">
+    <button class="active" data-pane="pair">Jumeler</button>
+    <button data-pane="apk">Installer l'app</button>
+  </div>
   <div id="pairBox"><p>Chargement…</p></div>
+  <div id="apkBox" class="hidden"></div>
   <div class="row"><span>Téléphones connectés</span><b id="dlgPhones">0</b></div>
   <div class="row"><span>Version du service</span><b id="dlgVersion">–</b></div>
   <div style="text-align:right;margin-top:1rem"><button class="btn" id="dlgClose">Fermer</button></div>

@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import QRCode from 'qrcode';
@@ -41,11 +42,36 @@ async function resolveFile(urlPath) {
 // la friction notée en Phase 2 (token recopié à la main). Générée à la volée
 // (pas un fichier statique) car l'IP LAN peut changer d'une exécution à
 // l'autre (DHCP, voir SUMMARY du vault) et doit toujours refléter l'état réel.
+// APK de l'app téléphone : embarqué par l'installeur (sidecar/app.apk) ou, en
+// dev, le dernier build debug du dépôt.
+const APK_CANDIDATES = [
+  join(SERVICE_ROOT, '..', 'app.apk'),
+  join(SERVICE_ROOT, '..', 'mobile-app', 'android', 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk'),
+];
+
+async function findApk() {
+  for (const path of APK_CANDIDATES) {
+    try {
+      return { path, size: (await stat(path)).size };
+    } catch {
+      // absent, on tente le suivant
+    }
+  }
+  return null;
+}
+
 async function buildPairingData() {
   const host = getLanAddress();
   const payload = JSON.stringify({ host, port: config.localWs.port, token: config.localWs.token });
   const qrDataUrl = host ? await QRCode.toDataURL(payload, { margin: 1, scale: 6 }) : null;
-  return { host, port: config.localWs.port, qrDataUrl };
+  const apk = await findApk();
+  const apkUrl = host ? `http://${host}:${config.localWs.port}/app.apk` : null;
+  return {
+    host,
+    port: config.localWs.port,
+    qrDataUrl,
+    apk: apk && apkUrl ? { url: apkUrl, sizeMb: (apk.size / 1048576).toFixed(1), qrDataUrl: await QRCode.toDataURL(apkUrl, { margin: 1, scale: 6 }) } : null,
+  };
 }
 
 async function buildPairingPage() {
@@ -108,6 +134,20 @@ export function createStaticServer({ getStatus, launchObs }) {
       if (urlPath === '/api/obs/launch' && req.method === 'POST') return json(await launchObs());
       res.writeHead(404);
       return res.end('Not found');
+    }
+
+    if (urlPath === '/app.apk') {
+      const apk = await findApk();
+      if (!apk) {
+        res.writeHead(404);
+        return res.end('Not found');
+      }
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.android.package-archive',
+        'Content-Length': apk.size,
+        'Content-Disposition': 'attachment; filename="CouchStream.apk"',
+      });
+      return createReadStream(apk.path).pipe(res);
     }
 
     if (urlPath === '/pair') {

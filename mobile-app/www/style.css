@@ -379,5 +379,6 @@ main {
   font-size: .8rem;
   background: radial-gradient(circle at 50% 40%, #1b1b22, #0a0a0d);
 }
-.preview-placeholder svg { width: 2.4rem; height: 2.4rem; opacity: .6; }
+.preview-placeholder svg { width: 2.4rem; height: 2.4rem; opacity: .6; animation: previewPulse 2.4s ease-in-out infinite; }
+@keyframes previewPulse { 0%, 100% { opacity: .35; } 50% { opacity: .8; } }
 .preview-placeholder b { color: var(--fg); font-size: .95rem; }

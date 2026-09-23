@@ -287,13 +287,24 @@ $('chatForm').onsubmit = (e) => {
 
 // ---------- téléphone & infos ----------
 
+function pane(name) {
+  document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.pane === name));
+  $('pairBox').classList.toggle('hidden', name !== 'pair');
+  $('apkBox').classList.toggle('hidden', name !== 'apk');
+}
+document.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => pane(b.dataset.pane)));
+
 async function openDialog() {
+  pane('pair');
   $('dlg').showModal();
   try {
     const p = await (await fetch('/api/pairing', { cache: 'no-store' })).json();
     $('pairBox').innerHTML = p.qrDataUrl
       ? `<p>Scanne ce code depuis l'app, dans <b>Réglages → Scanner le QR de pairing</b>.</p><img src="${p.qrDataUrl}" alt="QR de pairing"><p>Ou saisis à la main : hôte <code>${esc(p.host)}</code>, port <code>${esc(p.port)}</code>.</p>`
       : "<p>Impossible de détecter l'IP de ce PC sur le réseau — vérifie la connexion.</p>";
+    $('apkBox').innerHTML = !p.apk
+      ? "<p>Le fichier de l'app n'est pas inclus dans cette installation.</p>"
+      : `<p>Sur le téléphone (même Wi-Fi), scanne ce code avec l'appareil photo pour télécharger l'app (${p.apk.sizeMb} Mo).</p><img src="${p.apk.qrDataUrl}" alt="QR de téléchargement"><p>Ou ouvre <code>${esc(p.apk.url)}</code>. Android demandera d'autoriser l'installation depuis ce navigateur.</p>`;
   } catch { $('pairBox').innerHTML = '<p>Le service ne répond pas.</p>'; }
 }
 $('settingsBtn').onclick = openDialog;
