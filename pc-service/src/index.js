@@ -44,6 +44,13 @@ async function main() {
   process.on('SIGTERM', shutdown);
 }
 
+// Lancé par l'app Windows (desktop/) : si elle disparaît (crash, kill), stdin
+// se ferme et le service s'arrête au lieu de rester orphelin.
+if (process.env.COUCH_PARENT_STDIN === '1') {
+  process.stdin.resume();
+  process.stdin.on('end', () => process.exit(0));
+}
+
 main().catch((err) => {
   console.error('Échec du démarrage du service compagnon:', err);
   process.exit(1);

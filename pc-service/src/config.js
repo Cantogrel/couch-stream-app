@@ -1,4 +1,8 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import { ENV_PATH, migrateLegacyEnv } from './paths.js';
+
+migrateLegacyEnv();
+dotenv.config({ path: ENV_PATH });
 
 function required(name) {
   const value = process.env[name];

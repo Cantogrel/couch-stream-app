@@ -1,10 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
+import { ENV_PATH } from '../paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ENV_PATH = path.resolve(__dirname, '../../.env');
 
 const TOKEN_URL = 'https://id.twitch.tv/oauth2/token';
 const VALIDATE_URL = 'https://id.twitch.tv/oauth2/validate';
