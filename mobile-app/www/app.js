@@ -1020,6 +1020,19 @@ for (const id of ['cfgNotifChat', 'cfgNotifCooldown', 'cfgNotifMentions', 'cfgMe
   $(id).addEventListener('change', readSettingsForm);
 }
 
+// Remet tout sauf la connexion (hôte/port/token) : un reset ne doit jamais
+// obliger à re-scanner le QR de pairing.
+$('resetDefaultsBtn').addEventListener('click', () => {
+  if (!confirm('Restaurer les valeurs par défaut (notifications et audio) ?')) return;
+  const { host, port, token } = app.settings;
+  app.settings = { ...defaultSettings(), host, port, token };
+  saveSettings(app.settings);
+  populateSettingsForm();
+  applyMicAudioSettings();
+  cmd('audio.setJitterBuffer', { ms: app.settings.jitterMs }).catch(() => {});
+  toast('Valeurs par défaut restaurées');
+});
+
 $('saveConnBtn').addEventListener('click', () => {
   readSettingsForm();
   if (app.ws) { app.manualDisconnect = true; app.ws.close(); }
