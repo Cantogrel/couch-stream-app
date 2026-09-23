@@ -76,7 +76,7 @@ export class TwitchService extends EventEmitter {
         try {
           return await fn();
         } catch (err) {
-          if (generation !== this._generation) throw err;
+          if (generation !== this._generation || err.fatalAuth) throw err;
           console.error(`[twitch] ${label} — nouvelle tentative dans ${RETRY_MS / 1000}s:`, err.message);
           await new Promise((r) => setTimeout(r, RETRY_MS));
         }
@@ -94,8 +94,22 @@ export class TwitchService extends EventEmitter {
       console.log('[twitch] IRC connecté');
       this.state = 'connected';
     } catch (err) {
+      if (err.fatalAuth) return this._dropTokens(err.message);
       if (!/remplacée/.test(err.message)) throw err;
     }
+  }
+
+  // Jetons inutilisables : on les oublie et on repasse en « à connecter »,
+  // l'assistant (rouvert) propose de se reconnecter.
+  async _dropTokens(reason) {
+    console.error(`[twitch] connexion Twitch à refaire : ${reason}`);
+    this.tokenManager.stop();
+    this.tokenManager.setTokens({ accessToken: null, refreshToken: null });
+    this.tokenManager.clientSecret = '';
+    this.state = 'unconfigured';
+    this.login = null;
+    await updateSecrets({ twitchAccessToken: null, twitchRefreshToken: null, twitchLogin: null, twitchClientSecret: null }).catch(() => {});
+    this.emit('reauth-needed', reason);
   }
 
   status() {

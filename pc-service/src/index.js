@@ -59,6 +59,7 @@ async function main() {
     // Installation existante (jetons déjà présents) : pas d'assistant à imposer.
     if (!setup.hasSetupFile()) setup.markCompleted(true, true);
     twitch.connect().catch((err) => console.error('[twitch] connexion impossible:', err.message));
+    twitch.on('reauth-needed', () => setup.markCompleted(false));
   } else {
     console.log('[twitch] pas encore connecté — à faire dans l’assistant de configuration');
   }

@@ -5,7 +5,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const post = (path, body = {}) => fetch(path, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(body) }).then((r) => r.json());
 
 let S = null;            // dernier état
-const local = { obsMsg: null, obsBusy: false, micMsg: null, micBusy: false, twMsg: null, openedFor: null, qr: null, qrAt: 0, pairSkipped: false };
+const local = { obsMsg: null, obsBusy: false, micMsg: null, micBusy: false, twMsg: null, openedFor: null, pair: null, qrAt: 0, pairSkipped: false };
 
 const STEPS = [
   { key: 'obs', title: 'OBS Studio', done: (s) => s.obs.connected, badge: (s) => (s.obs.connected ? 'connecté' : 'à connecter'), render: renderObs },
@@ -54,7 +54,11 @@ function renderAudio(s) {
 // ---------- Twitch ----------
 function renderTwitch(s) {
   const t = s.twitch, a = t.auth;
-  if (t.state === 'connected') return `<p class="msg ok">Connecté en tant que <b>${esc(t.login)}</b>. Le chat et la modération sont prêts.</p>`;
+  if (t.state === 'connected' && a.status !== 'pending') {
+    return `<p class="msg ok">Connecté en tant que <b>${esc(t.login)}</b>. Le chat et la modération sont prêts.</p>
+      <p class="note">Ce n'est pas la bonne chaîne ? Sur la page Twitch, clique « Ce n'est pas vous ? Déconnectez-vous » pour choisir le compte de ta chaîne.</p>
+      <button class="secondary" id="twStart">Changer de compte Twitch</button>`;
+  }
   if (t.state === 'connecting') return `<p>Connexion au chat de <b>${esc(t.login)}</b>…</p>`;
   let h = '';
   if (a.status === 'pending') {
@@ -86,10 +90,22 @@ function renderMic(s) {
 // ---------- Téléphone ----------
 function renderPhone(s) {
   if (s.phones > 0) return `<p class="msg ok">Un téléphone est connecté.</p>`;
-  let h = `<p>Installe l'app sur ton téléphone puis jumelle-la avec ce PC. Les deux QR sont dans « Téléphone &amp; infos » de la console ; voici celui du jumelage :</p>`;
-  h += local.qr ? `<img class="qr" src="${local.qr}" alt="QR de jumelage"><p class="note">Dans l'app : Réglages → « Jumeler avec le PC ». Pas encore l'app ? Elle se télécharge depuis la console PC (onglet « Installer l'app »).</p>` : '<p>Chargement du QR…</p>';
-  h += `<button class="secondary" id="phSkip">Le faire plus tard</button>`;
-  return h;
+  const p = local.pair;
+  if (!p) return '<p>Chargement…</p>';
+  if (!p.qrDataUrl) return `<p class="msg err">Impossible de détecter l'adresse de ce PC sur le réseau : vérifie qu'il est connecté au Wi-Fi ou au câble réseau.</p>`;
+  // Deux temps : d'abord installer l'app (le téléphone est sur le même réseau
+  // que ce PC), ensuite la jumeler.
+  const install = p.apk
+    ? `<div class="sub-step"><h3>A. Installe l'application (Android)</h3>
+        <p>Avec l'appareil photo du téléphone (même Wi-Fi que ce PC), scanne ce code : l'app (${esc(p.apk.sizeMb)} Mo) se télécharge.</p>
+        <img class="qr" src="${p.apk.qrDataUrl}" alt="QR de téléchargement">
+        <p class="note">Ou ouvre ce lien dans le navigateur du téléphone : <b>${esc(p.apk.url)}</b><br>
+        Android demandera d'autoriser l'installation depuis ce navigateur (« Installer des applis inconnues ») : c'est normal, l'app n'est pas sur le Play Store.</p></div>`
+    : `<div class="sub-step"><h3>A. Installe l'application</h3><p>Le fichier de l'app n'est pas inclus dans cette installation : récupère l'APK auprès de la personne qui t'a donné Couch Stream App.</p></div>`;
+  const pair = `<div class="sub-step"><h3>B. Jumelle-la avec ce PC</h3>
+      <p>Ouvre l'app, va dans <b>Réglages → « Jumeler avec le PC »</b> et scanne ce code (valable 10 minutes, il se renouvelle tout seul).</p>
+      <img class="qr" src="${p.qrDataUrl}" alt="QR de jumelage"></div>`;
+  return `${install}${pair}<button class="secondary" id="phSkip">Le faire plus tard</button>`;
 }
 
 // ---------- rendu ----------
@@ -101,7 +117,7 @@ function render() {
     const done = st.done(S);
     return `<div class="step ${done ? 'done' : ''} ${i === firstTodo ? 'current' : ''}" data-key="${st.key}">
       <div class="head"><span class="num">${done ? '✓' : i + 1}</span><h2>${st.title}</h2><span class="badge">${esc(st.badge(S))}</span></div>
-      <div class="body ${done ? 'collapsible' : ''}">${st.render(S)}</div></div>`;
+      <div class="body ${done && st.key !== 'twitch' ? 'collapsible' : ''}">${st.render(S)}</div></div>`;
   }).join('');
   // Ne réécrit le DOM que si le contenu change : préserve la saisie en cours.
   const key = html + JSON.stringify(local.obsMsg) + local.micBusy;
@@ -148,9 +164,9 @@ function bind() {
 $('finishBtn').onclick = async () => { await post('/api/setup/complete'); location.href = '/desktop'; };
 
 async function loadQr() {
-  if (Date.now() - local.qrAt < 120000 && local.qr) return;
+  if (Date.now() - local.qrAt < 120000 && local.pair) return;
   local.qrAt = Date.now();
-  try { local.qr = (await (await fetch('/api/pairing', { cache: 'no-store' })).json()).qrDataUrl; lastKey = ''; } catch { /* réessayé */ }
+  try { local.pair = await (await fetch('/api/pairing', { cache: 'no-store' })).json(); lastKey = ''; } catch { /* réessayé */ }
 }
 
 async function refresh() {

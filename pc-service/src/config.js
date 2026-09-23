@@ -9,7 +9,11 @@ dotenv.config({ path: ENV_PATH });
 // Client ID de l'app Twitch « Couch Stream App » partagée par tous les
 // utilisateurs (flux Device Code, pas de secret client embarqué : un Client ID
 // n'est pas un secret). Surchargeable par TWITCH_CLIENT_ID.
-export const DEFAULT_TWITCH_CLIENT_ID = '6x9xjpr9oltl5amsoop7ixaedupu20';
+export const DEFAULT_TWITCH_CLIENT_ID = 'uo0n5gaqqlgm26o089d5cam2jk4u6g';
+
+// Ancienne app Twitch « confidentielle » (supprimée) : un .env qui la référence
+// encore est nettoyé, sinon elle primerait sur le Client ID public ci-dessus.
+const RETIRED_CLIENT_ID = '6x9xjpr9oltl5amsoop7ixaedupu20';
 
 // Scopes demandés à la connexion Twitch : chat + modération des messages/bans.
 export const TWITCH_SCOPES = ['chat:read', 'chat:edit', 'moderator:manage:banned_users', 'moderator:manage:chat_messages'];
@@ -17,6 +21,10 @@ export const TWITCH_SCOPES = ['chat:read', 'chat:edit', 'moderator:manage:banned
 // Aucune variable n'est plus obligatoire : c'est l'assistant de premier
 // lancement (/setup) qui renseigne OBS et Twitch. Seul le token local est
 // généré ici s'il manque, pour que la console PC puisse toujours s'y connecter.
+if (process.env.TWITCH_CLIENT_ID === RETIRED_CLIENT_ID) {
+  for (const key of ['TWITCH_CLIENT_ID', 'TWITCH_CLIENT_SECRET', 'TWITCH_REDIRECT_URI']) setEnvVar(key, null);
+}
+
 if (!process.env.LOCAL_WS_TOKEN) setEnvVar('LOCAL_WS_TOKEN', randomBytes(24).toString('hex'));
 
 export const config = {

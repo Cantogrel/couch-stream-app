@@ -9,6 +9,8 @@ const VALIDATE_URL = 'https://id.twitch.tv/oauth2/validate';
 // d'accès expire en ~4h10, le refresh doit être automatique).
 const REFRESH_MARGIN_SECONDS = 300;
 
+const fatal = (message) => Object.assign(new Error(message), { fatalAuth: true });
+
 export class TokenManager extends EventEmitter {
   constructor({ clientId, clientSecret }) {
     super();
@@ -40,9 +42,13 @@ export class TokenManager extends EventEmitter {
         await this.refresh();
         return;
       }
-      const { expires_in } = await res.json();
+      const { expires_in, client_id } = await res.json();
+      // Jeton émis pour une autre app Twitch (ex. l'ancienne, supprimée) : il ne
+      // pourra jamais être rafraîchi avec ce Client ID — reconnexion nécessaire.
+      if (client_id && client_id !== this.clientId) throw fatal('jeton émis pour une autre application Twitch');
       this._scheduleRefresh(expires_in);
     } catch (err) {
+      if (err.fatalAuth) throw err;
       console.error('[twitch] validation du token échouée, tentative de refresh:', err.message);
       await this.refresh();
     }
@@ -60,7 +66,10 @@ export class TokenManager extends EventEmitter {
     const res = await fetch(TOKEN_URL, { method: 'POST', body: new URLSearchParams(params) });
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`Refresh du token Twitch échoué (${res.status}): ${text}`);
+      const err = new Error(`Refresh du token Twitch échoué (${res.status}): ${text}`);
+      // 400/401 = jeton ou app rejetés (pas une panne réseau) : inutile de réessayer.
+      if (res.status === 400 || res.status === 401) err.fatalAuth = true;
+      throw err;
     }
     const data = await res.json();
     this.accessToken = data.access_token;
