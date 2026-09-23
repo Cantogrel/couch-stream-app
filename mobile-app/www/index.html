@@ -37,6 +37,12 @@
         <div class="health-item"><span id="totalFrames">–</span><small>frames totales</small></div>
         <div class="health-item"><span id="congestion">–</span><small>congestion</small></div>
       </div>
+      <div class="health-row">
+        <div class="health-item"><span id="bitrate">–</span><small>kb/s</small></div>
+        <div class="health-item"><span id="fps">–</span><small>fps</small></div>
+        <div class="health-item"><span id="cpu">–</span><small>CPU OBS</small></div>
+      </div>
+      <div id="healthStatus" class="stat-sub"></div>
     </div>
 
     <div class="card">
@@ -68,6 +74,20 @@
         injection dans VB-Cable, indépendamment de la source OBS ci-contre.</p>
       <label class="field">Source micro
         <select id="micDeviceSelect"><option value="">Micro par défaut</option></select>
+      </label>
+      <label class="field">
+        Gain d'entrée (<span id="micGainValue">100</span>%)
+        <input type="range" id="micGainSlider" min="0" max="300" value="100">
+      </label>
+      <label class="switch-row">
+        <span>Limiteur (évite la saturation)</span>
+        <input type="checkbox" id="micLimiter">
+      </label>
+      <label class="field">Buffer de gigue PC (ms) — monter si craquements
+        <select id="jitterSelect">
+          <option value="20">20</option><option value="30">30</option>
+          <option value="60">60</option><option value="100">100</option>
+        </select>
       </label>
       <div id="meter"><div id="meterBar"></div></div>
       <button id="micSendBtn" class="big-btn full">Démarrer l'envoi</button>
@@ -132,6 +152,26 @@
       <label class="field">
         Mots-clés (séparés par des virgules)
         <input type="text" id="cfgMentionKeywords" placeholder="pseudo, autre_pseudo">
+      </label>
+      <label class="switch-row">
+        <span>Alerte santé du stream (frames perdues / congestion)</span>
+        <input type="checkbox" id="cfgNotifHealth">
+      </label>
+      <label class="field">
+        Seuil de frames perdues (% sur la dernière minute)
+        <input type="number" id="cfgHealthDropPct" min="0.1" max="50" step="0.1" value="2">
+      </label>
+      <label class="field">
+        Seuil de congestion (%)
+        <input type="number" id="cfgHealthCongestionPct" min="1" max="100" value="30">
+      </label>
+      <label class="switch-row">
+        <span>Alerte si OBS ou Twitch se déconnecte (en live)</span>
+        <input type="checkbox" id="cfgNotifDisconnect">
+      </label>
+      <label class="field">
+        Ignorer ces pseudos (bots, séparés par des virgules)
+        <input type="text" id="cfgIgnoredUsers" placeholder="nightbot, streamelements">
       </label>
       <button id="notifPermBtn" class="btn full">Activer les notifications</button>
       <button id="notifTestBtn" class="btn full">Tester une notification</button>

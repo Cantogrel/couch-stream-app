@@ -29,6 +29,8 @@ export class ObsController extends EventEmitter {
     this.password = password;
     this.obs = null;
     this.connected = false;
+    // Dernier relevé d'octets sortants, pour calculer le débit par différence.
+    this.lastBytes = null;
   }
 
   // Attache les listeners à une instance OBSWebSocket donnée — extrait pour
@@ -110,6 +112,32 @@ export class ObsController extends EventEmitter {
       congestion: streamStatus.outputCongestion,
       micMuted: inputMuted,
       micVolume: inputVolumeMul,
+    };
+  }
+
+  // Santé du stream (Phase 5) : débit calculé par différence d'octets entre
+  // deux appels (obs-websocket n'expose pas de bitrate directement), plus
+  // fps/CPU de GetStats. Le premier appel après un (re)démarrage n'a pas de
+  // point de comparaison → bitrateKbps null.
+  async getHealth() {
+    const [status, stats] = await Promise.all([this._call('GetStreamStatus'), this._call('GetStats')]);
+    const now = Date.now();
+    let bitrateKbps = null;
+    if (status.outputActive && this.lastBytes && status.outputBytes >= this.lastBytes.bytes) {
+      const dtS = (now - this.lastBytes.at) / 1000;
+      if (dtS > 0) bitrateKbps = Math.round(((status.outputBytes - this.lastBytes.bytes) * 8) / 1000 / dtS);
+    }
+    this.lastBytes = status.outputActive ? { bytes: status.outputBytes, at: now } : null;
+    return {
+      streaming: status.outputActive,
+      bitrateKbps,
+      fps: Math.round(stats.activeFps * 10) / 10,
+      cpuPct: Math.round(stats.cpuUsage * 10) / 10,
+      renderMs: Math.round(stats.averageFrameRenderTime * 10) / 10,
+      skippedRender: stats.renderSkippedFrames,
+      droppedFrames: status.outputSkippedFrames,
+      totalFrames: status.outputTotalFrames,
+      congestion: status.outputCongestion,
     };
   }
 

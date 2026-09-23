@@ -184,6 +184,16 @@ export class LocalWsServer {
         return this.obs.setMicMuted(Boolean(payload.muted));
       case 'obs.setMicVolume':
         return this.obs.setMicVolume(Number(payload.volume));
+      case 'obs.getHealth':
+        return this.obs.getHealth();
+      case 'audio.setJitterBuffer': {
+        const ms = Number(payload.ms);
+        if (!Number.isFinite(ms) || ms < 10 || ms > 200) throw new Error('jitter buffer hors plage (10-200 ms)');
+        this.pcmPlayer.jitterBufferMs = ms;
+        return { ms };
+      }
+      case 'audio.getSettings':
+        return { jitterBufferMs: this.pcmPlayer.jitterBufferMs };
       case 'obs.getScreenshot':
         return { dataUrl: await this.obs.getScreenshot() };
 

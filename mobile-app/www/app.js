@@ -16,6 +16,14 @@ const defaultSettings = () => ({
   notifCooldownS: 45,
   notifMentions: false,
   mentionKeywords: '',
+  notifHealth: false,
+  healthDropPct: 2,
+  healthCongestionPct: 30,
+  notifDisconnect: false,
+  ignoredUsers: '',
+  micGainPct: 100,
+  micLimiter: false,
+  jitterMs: 30,
 });
 
 function loadSettings() {
@@ -44,7 +52,10 @@ const app = {
   chatMessagesById: new Map(),
   livePreviewTimer: null,
   streamClock: null,
-  mic: { pc: null, stream: null, audioCtx: null, analyser: null, raf: null, sending: false },
+  healthTimer: null,
+  healthSamples: [],
+  lastHealthAlertAt: 0,
+  mic: { pc: null, stream: null, audioCtx: null, analyser: null, gainNode: null, limiter: null, raf: null, sending: false },
 };
 
 // ---------- utilitaires UI ----------
@@ -130,6 +141,9 @@ function handleMessage(msg) {
     case 'welcome':
       setConnected(true);
       log('[connexion] authentifié');
+      // Le PC oublie le buffer de gigue à son redémarrage : on réapplique le
+      // choix mémorisé du téléphone à chaque connexion.
+      if (app.settings.jitterMs !== 30) cmd('audio.setJitterBuffer', { ms: app.settings.jitterMs }).catch(() => {});
       startKeepAlive();
       break;
     case 'state':
@@ -211,10 +225,16 @@ function handleEvent(msg) {
       syncMicUI();
       break;
     case 'obs.connection':
-      if (!msg.connected) toast('OBS déconnecté côté PC');
+      if (!msg.connected) {
+        toast('OBS déconnecté côté PC');
+        alertDisconnect('OBS');
+      }
       break;
     case 'twitch.connection':
-      if (!msg.connected) toast('Twitch IRC déconnecté côté PC');
+      if (!msg.connected) {
+        toast('Twitch IRC déconnecté côté PC');
+        alertDisconnect('Twitch');
+      }
       break;
     case 'chat.message':
       onChatMessage(msg);
@@ -246,7 +266,72 @@ function renderDashboard() {
 
   syncMicUI();
   renderScenes();
+  if (!o.streaming) renderHealth(null);
 }
+
+// ---------- santé du stream (Phase 5) ----------
+
+const HEALTH_INTERVAL_MS = 2000;
+const HEALTH_WINDOW_MS = 60000;
+const HEALTH_ALERT_COOLDOWN_MS = 120000;
+const NOTIF_ID_HEALTH = 9003;
+const NOTIF_ID_DISCONNECT = 9004;
+
+function renderHealth(h) {
+  $('bitrate').textContent = h?.bitrateKbps ?? '–';
+  $('fps').textContent = h ? h.fps : '–';
+  $('cpu').textContent = h ? h.cpuPct + '%' : '–';
+  if (h) {
+    $('droppedFrames').textContent = h.droppedFrames ?? '–';
+    $('totalFrames').textContent = h.totalFrames ?? '–';
+    $('congestion').textContent = h.congestion != null ? Math.round(h.congestion * 100) + '%' : '–';
+  }
+}
+
+async function pollHealth() {
+  if (!app.ws || app.ws.readyState !== WebSocket.OPEN) return;
+  const onDashboard = $('tab-dashboard').classList.contains('active');
+  // Hors live et hors tableau de bord : rien à surveiller ni à afficher.
+  if (!app.obs.streaming && !onDashboard) return;
+  try {
+    const h = await cmd('obs.getHealth');
+    $('healthStatus').textContent = '';
+    if (!h.streaming) { app.healthSamples = []; return renderHealth(null); }
+    renderHealth(h);
+    checkHealth(h);
+  } catch (err) {
+    $('healthStatus').textContent = 'santé indisponible: ' + err.message;
+  }
+}
+
+// Alerte sur la tendance récente, pas sur le cumul depuis le début du live :
+// un pic de frames perdues il y a 2h ne doit pas déclencher d'alerte à vie.
+function checkHealth(h) {
+  const now = Date.now();
+  app.healthSamples.push({ at: now, dropped: h.droppedFrames, total: h.totalFrames });
+  while (app.healthSamples.length > 1 && now - app.healthSamples[0].at > HEALTH_WINDOW_MS) app.healthSamples.shift();
+  if (!app.settings.notifHealth) return;
+  if (now - app.lastHealthAlertAt < HEALTH_ALERT_COOLDOWN_MS) return;
+
+  const first = app.healthSamples[0];
+  const dTotal = h.totalFrames - first.total;
+  const dropPct = dTotal > 0 ? ((h.droppedFrames - first.dropped) / dTotal) * 100 : 0;
+  const congestionPct = (h.congestion ?? 0) * 100;
+
+  const problems = [];
+  if (dropPct >= app.settings.healthDropPct) problems.push(`${dropPct.toFixed(1)}% de frames perdues`);
+  if (congestionPct >= app.settings.healthCongestionPct) problems.push(`congestion ${Math.round(congestionPct)}%`);
+  if (!problems.length) return;
+  app.lastHealthAlertAt = now;
+  notify(NOTIF_ID_HEALTH, 'Stream : problème de connexion', problems.join(' · '));
+}
+
+function alertDisconnect(what) {
+  if (!app.settings.notifDisconnect || !app.obs.streaming) return;
+  notify(NOTIF_ID_DISCONNECT, `${what} déconnecté`, `${what} a perdu la connexion pendant le live.`);
+}
+
+app.healthTimer = setInterval(pollHealth, HEALTH_INTERVAL_MS);
 
 // Le service n'envoie la durée du stream qu'au moment de l'état initial ou
 // d'un changement (scène, mute...) — sans ça, l'affichage restait figé
@@ -386,6 +471,7 @@ function onChatMessage(msg) {
   // depuis un autre client IRC du même compte) — seule l'activité des
   // autres doit alerter.
   if (msg.self) return;
+  if (isIgnoredUser(msg.username)) return;
   checkChatActivity(msg);
   checkMention(msg);
 }
@@ -620,6 +706,11 @@ async function ensureNotifPermission() {
 // évite le spam sans jamais rater un premier commentaire. Uniquement en
 // live : pas d'alerte à propos d'un chat qui n'intéresse personne hors stream
 // (retour utilisateur explicite).
+function isIgnoredUser(username) {
+  const ignored = app.settings.ignoredUsers.split(',').map((k) => k.trim().toLowerCase()).filter(Boolean);
+  return ignored.includes(String(username).toLowerCase());
+}
+
 function checkChatActivity(msg) {
   if (!app.settings.notifChat || !app.obs.streaming) {
     console.log('[notification] checkChatActivity bloqué', { notifChat: app.settings.notifChat, streaming: app.obs.streaming });
@@ -697,6 +788,8 @@ async function onNotifCheckboxChange(e) {
 }
 $('cfgNotifChat').addEventListener('change', onNotifCheckboxChange);
 $('cfgNotifMentions').addEventListener('change', onNotifCheckboxChange);
+$('cfgNotifHealth').addEventListener('change', onNotifCheckboxChange);
+$('cfgNotifDisconnect').addEventListener('change', onNotifCheckboxChange);
 
 // ---------- micro WebRTC (envoi vers le PC) ----------
 
@@ -719,7 +812,7 @@ async function startMicSend() {
   }
   try {
     const deviceId = $('micDeviceSelect').value;
-    app.mic.stream = await navigator.mediaDevices.getUserMedia({
+    const raw = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
         ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
@@ -730,7 +823,8 @@ async function startMicSend() {
     // (voir le commentaire dans KeepAliveService.java : impossible de le
     // déclarer avant que la permission soit accordée, sur Android 14+).
     startKeepAlive();
-    startMeter(app.mic.stream);
+    app.mic.stream = raw;
+    const processed = buildMicChain(raw);
 
     const pc = new RTCPeerConnection({ iceServers: [] });
     app.mic.pc = pc;
@@ -738,7 +832,7 @@ async function startMicSend() {
       if (e.candidate) app.ws.send(JSON.stringify({ type: 'webrtc-ice', candidate: e.candidate.toJSON() }));
     };
     pc.onconnectionstatechange = () => log('[webrtc local] état: ' + pc.connectionState);
-    for (const track of app.mic.stream.getTracks()) pc.addTrack(track, app.mic.stream);
+    for (const track of processed.getTracks()) pc.addTrack(track, processed);
 
     const offer = await pc.createOffer();
     const sdp = forceOpusPtime(offer.sdp, 10);
@@ -802,12 +896,41 @@ async function populateMicDevices() {
 
 if (navigator.mediaDevices) navigator.mediaDevices.ondevicechange = populateMicDevices;
 
-function startMeter(stream) {
-  app.mic.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const source = app.mic.audioCtx.createMediaStreamSource(stream);
+// Chaîne source → gain → limiteur → (VU-mètre + flux envoyé). Le VU-mètre
+// mesure le signal traité, donc exactement ce que le PC reçoit. Le limiteur
+// est un compresseur toujours en place, rendu transparent (ratio 1) quand
+// désactivé — permet de le basculer en direct sans reconstruire la chaîne.
+function buildMicChain(stream) {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  ctx.resume?.();
+  app.mic.audioCtx = ctx;
+  const source = ctx.createMediaStreamSource(stream);
+  app.mic.gainNode = ctx.createGain();
+  app.mic.limiter = ctx.createDynamicsCompressor();
+  const dest = ctx.createMediaStreamDestination();
+  source.connect(app.mic.gainNode);
+  app.mic.gainNode.connect(app.mic.limiter);
+  app.mic.limiter.connect(dest);
+  applyMicAudioSettings();
+  startMeter(app.mic.limiter);
+  return dest.stream;
+}
+
+function applyMicAudioSettings() {
+  if (app.mic.gainNode) app.mic.gainNode.gain.value = app.settings.micGainPct / 100;
+  const l = app.mic.limiter;
+  if (!l) return;
+  if (app.settings.micLimiter) {
+    l.threshold.value = -6; l.knee.value = 0; l.ratio.value = 20; l.attack.value = 0.003; l.release.value = 0.1;
+  } else {
+    l.threshold.value = 0; l.knee.value = 0; l.ratio.value = 1;
+  }
+}
+
+function startMeter(node) {
   app.mic.analyser = app.mic.audioCtx.createAnalyser();
   app.mic.analyser.fftSize = 512;
-  source.connect(app.mic.analyser);
+  node.connect(app.mic.analyser);
   const data = new Uint8Array(app.mic.analyser.frequencyBinCount);
   const tick = () => {
     app.mic.analyser.getByteTimeDomainData(data);
@@ -822,8 +945,31 @@ function startMeter(stream) {
 function stopMeter() {
   if (app.mic.raf) cancelAnimationFrame(app.mic.raf);
   if (app.mic.audioCtx) { app.mic.audioCtx.close(); app.mic.audioCtx = null; }
+  app.mic.gainNode = null;
+  app.mic.limiter = null;
   $('meterBar').style.width = '0%';
 }
+
+$('micGainSlider').addEventListener('input', (e) => {
+  $('micGainValue').textContent = e.target.value;
+  app.settings.micGainPct = Number(e.target.value);
+  applyMicAudioSettings();
+});
+$('micGainSlider').addEventListener('change', () => saveSettings(app.settings));
+$('micLimiter').addEventListener('change', (e) => {
+  app.settings.micLimiter = e.target.checked;
+  saveSettings(app.settings);
+  applyMicAudioSettings();
+});
+$('jitterSelect').addEventListener('change', async (e) => {
+  app.settings.jitterMs = Number(e.target.value);
+  saveSettings(app.settings);
+  try {
+    await cmd('audio.setJitterBuffer', { ms: app.settings.jitterMs });
+  } catch (err) {
+    toast(err.message);
+  }
+});
 
 $('micSendBtn').addEventListener('click', () => {
   if (app.mic.sending) stopMicSend();
@@ -840,6 +986,15 @@ function populateSettingsForm() {
   $('cfgNotifCooldown').value = app.settings.notifCooldownS;
   $('cfgNotifMentions').checked = app.settings.notifMentions;
   $('cfgMentionKeywords').value = app.settings.mentionKeywords;
+  $('cfgNotifHealth').checked = app.settings.notifHealth;
+  $('cfgHealthDropPct').value = app.settings.healthDropPct;
+  $('cfgHealthCongestionPct').value = app.settings.healthCongestionPct;
+  $('cfgNotifDisconnect').checked = app.settings.notifDisconnect;
+  $('cfgIgnoredUsers').value = app.settings.ignoredUsers;
+  $('micGainSlider').value = app.settings.micGainPct;
+  $('micGainValue').textContent = app.settings.micGainPct;
+  $('micLimiter').checked = app.settings.micLimiter;
+  $('jitterSelect').value = String(app.settings.jitterMs);
 }
 
 function readSettingsForm() {
@@ -850,12 +1005,18 @@ function readSettingsForm() {
   app.settings.notifCooldownS = Number($('cfgNotifCooldown').value) || 45;
   app.settings.notifMentions = $('cfgNotifMentions').checked;
   app.settings.mentionKeywords = $('cfgMentionKeywords').value;
+  app.settings.notifHealth = $('cfgNotifHealth').checked;
+  app.settings.healthDropPct = Number($('cfgHealthDropPct').value) || 2;
+  app.settings.healthCongestionPct = Number($('cfgHealthCongestionPct').value) || 30;
+  app.settings.notifDisconnect = $('cfgNotifDisconnect').checked;
+  app.settings.ignoredUsers = $('cfgIgnoredUsers').value;
   saveSettings(app.settings);
 }
 
 // Persiste les réglages de notifications dès qu'ils changent, sans attendre
 // le bouton "Enregistrer et connecter" (qui ne concerne que la connexion).
-for (const id of ['cfgNotifChat', 'cfgNotifCooldown', 'cfgNotifMentions', 'cfgMentionKeywords']) {
+for (const id of ['cfgNotifChat', 'cfgNotifCooldown', 'cfgNotifMentions', 'cfgMentionKeywords',
+  'cfgNotifHealth', 'cfgHealthDropPct', 'cfgHealthCongestionPct', 'cfgNotifDisconnect', 'cfgIgnoredUsers']) {
   $(id).addEventListener('change', readSettingsForm);
 }
 
