@@ -55,7 +55,7 @@ async function connectWs() {
   const ws = new WebSocket(`ws://${location.host}`);
   st.ws = ws;
   ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token: st.token }));
-  ws.onclose = () => { st.ws = null; st.pending.forEach((p) => p.reject(new Error('déconnecté'))); st.pending.clear(); };
+  ws.onclose = () => { st.ws = null; st.token = null; st.pending.forEach((p) => p.reject(new Error('déconnecté'))); st.pending.clear(); };
   ws.onmessage = (e) => onMessage(JSON.parse(e.data));
 }
 
@@ -304,10 +304,10 @@ async function loadDevices() {
     const list = await (await fetch('/api/devices', { cache: 'no-store' })).json();
     $('devBox').innerHTML = list.length
       ? '<div class="card-title" style="margin-top:.8rem">Téléphones jumelés</div>' + list.map((d) =>
-        `<div class="dev"><div class="info"><b>${esc(d.name)}</b><small>vu ${ago(d.lastSeenAt)}</small></div><button data-id="${esc(d.id)}">Oublier</button></div>`).join('')
+        `<div class="dev"><div class="info"><b>${esc(d.name)}</b><small>${d.online ? '● connecté' : 'vu ' + ago(d.lastSeenAt)}</small></div><button data-id="${esc(d.id)}">Oublier</button></div>`).join('')
       : '';
     $('devBox').querySelectorAll('button').forEach((b) => (b.onclick = async () => {
-      if (!confirm('Oublier ce téléphone ? Il devra être jumelé à nouveau.')) return;
+      if (!confirm(b.dataset.id === 'legacy' ? 'Oublier les téléphones jumelés avec l’ancien token partagé ? Ils devront être jumelés à nouveau par QR.' : 'Oublier ce téléphone ? Il devra être jumelé à nouveau.')) return;
       await fetch('/api/devices/' + encodeURIComponent(b.dataset.id), { method: 'DELETE' });
       loadDevices();
     }));

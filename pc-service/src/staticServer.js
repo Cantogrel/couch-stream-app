@@ -123,7 +123,7 @@ async function readBody(req, limit = 4096) {
   return raw ? JSON.parse(raw) : {};
 }
 
-export function createStaticServer({ getStatus, launchObs, devices, identity, onRevoke, service }) {
+export function createStaticServer({ getStatus, launchObs, devices, identity, listDevices, revokeDevice, service }) {
   return createServer(async (req, res) => {
     const urlPath = req.url === '/' ? '/index.html' : req.url === '/desktop' ? '/desktop.html' : req.url.split('?')[0];
 
@@ -164,12 +164,10 @@ export function createStaticServer({ getStatus, launchObs, devices, identity, on
       // à la boucle locale, jamais au LAN.
       if (urlPath === '/api/session' && req.method === 'GET') return json({ token: config.localWs.token });
       if (urlPath === '/api/pairing' && req.method === 'GET') return json(await buildPairingData({ devices, identity }));
-      if (urlPath === '/api/devices' && req.method === 'GET') return json(devices.list());
+      if (urlPath === '/api/devices' && req.method === 'GET') return json(listDevices());
       if (urlPath.startsWith('/api/devices/') && req.method === 'DELETE') {
         const id = decodeURIComponent(urlPath.slice('/api/devices/'.length));
-        const ok = devices.revoke(id);
-        if (ok) onRevoke(id);
-        return json({ ok });
+        return json({ ok: revokeDevice(id) });
       }
       if (urlPath === '/api/obs/launch' && req.method === 'POST') return json(await launchObs());
       res.writeHead(404);

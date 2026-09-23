@@ -2,6 +2,10 @@ import { WebSocketServer } from 'ws';
 import { MicReceiver } from './audio/micReceiver.js';
 import { createStaticServer } from './staticServer.js';
 import { launchObs } from './obsLocator.js';
+import { randomBytes } from 'node:crypto';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { config } from './config.js';
+import { ENV_PATH } from './paths.js';
 
 const AUTH_TIMEOUT_MS = 5000;
 
@@ -28,7 +32,7 @@ export class LocalWsServer {
   start() {
     // Même port pour les fichiers statiques (public/, testable depuis le
     // téléphone en HTTP) et le WebSocket (upgrade sur le même serveur HTTP).
-    this.httpServer = createStaticServer({ getStatus: () => this.getStatus(), launchObs, devices: this.devices, identity: this.identity, onRevoke: (id) => this.disconnectDevice(id), service: this.service });
+    this.httpServer = createStaticServer({ getStatus: () => this.getStatus(), launchObs, devices: this.devices, identity: this.identity, listDevices: () => this.listDevices(), revokeDevice: (id) => this.revokeDevice(id), service: this.service });
     this.wss = new WebSocketServer({ server: this.httpServer });
     this.httpServer.listen(this.port);
 
@@ -59,6 +63,43 @@ export class LocalWsServer {
       vbcable: { found: Boolean(this.pcmPlayer.device), label: this.pcmPlayer.device?.label ?? null },
       phones: [...this.authedClients].filter((ws) => !ws.isLocal).length,
     };
+  }
+
+  // Téléphones jumelés (avec état en ligne) + l'ancien jumelage par token
+  // partagé s'il est encore utilisé par un téléphone connecté.
+  listDevices() {
+    const remote = [...this.authedClients].filter((ws) => !ws.isLocal);
+    const list = this.devices.list().map((d) => ({ ...d, online: remote.some((ws) => ws.deviceId === d.id) }));
+    const legacy = remote.filter((ws) => !ws.deviceId).length;
+    if (legacy) list.push({ id: 'legacy', name: 'Ancien jumelage (token partagé)', legacy: true, online: true, lastSeenAt: Date.now() });
+    return list;
+  }
+
+  revokeDevice(id) {
+    if (id === 'legacy') return this._rotateSharedToken();
+    const ok = this.devices.revoke(id);
+    if (ok) this.disconnectDevice(id);
+    return ok;
+  }
+
+  // Oublier l'ancien jumelage = changer le token partagé : les téléphones qui
+  // l'utilisaient sont déconnectés, la console PC (boucle locale) le relit.
+  _rotateSharedToken() {
+    const token = randomBytes(24).toString('hex');
+    try {
+      let env = readFileSync(ENV_PATH, 'utf8');
+      env = /^LOCAL_WS_TOKEN=.*$/m.test(env) ? env.replace(/^LOCAL_WS_TOKEN=.*$/m, `LOCAL_WS_TOKEN=${token}`) : `${env}
+LOCAL_WS_TOKEN=${token}
+`;
+      writeFileSync(ENV_PATH, env);
+    } catch (err) {
+      console.error('[jumelage] persistance du nouveau token impossible:', err.message);
+      return false;
+    }
+    this.token = token;
+    config.localWs.token = token;
+    for (const ws of this.authedClients) if (!ws.isLocal && !ws.deviceId) ws.close(4003, 'jumelage révoqué');
+    return true;
   }
 
   // Ferme les connexions d'un téléphone dont le jumelage vient d'être révoqué.
