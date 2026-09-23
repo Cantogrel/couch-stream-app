@@ -35,7 +35,7 @@ jobs:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
-          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/couchstream-release.keystore"
+          echo "$KEYSTORE_B64" | tr -d '\r\n ' | base64 -d > "$RUNNER_TEMP/couchstream-release.keystore"
           {
             echo "storeFile=$(cygpath -m "$RUNNER_TEMP/couchstream-release.keystore")"
             echo "storePassword=$KEYSTORE_PASSWORD"
