@@ -41,10 +41,15 @@ async function resolveFile(urlPath) {
 // la friction notée en Phase 2 (token recopié à la main). Générée à la volée
 // (pas un fichier statique) car l'IP LAN peut changer d'une exécution à
 // l'autre (DHCP, voir SUMMARY du vault) et doit toujours refléter l'état réel.
-async function buildPairingPage() {
+async function buildPairingData() {
   const host = getLanAddress();
   const payload = JSON.stringify({ host, port: config.localWs.port, token: config.localWs.token });
   const qrDataUrl = host ? await QRCode.toDataURL(payload, { margin: 1, scale: 6 }) : null;
+  return { host, port: config.localWs.port, qrDataUrl };
+}
+
+async function buildPairingPage() {
+  const { host, qrDataUrl } = await buildPairingData();
 
   const body = host
     ? `<img src="${qrDataUrl}" alt="QR de pairing" width="280" height="280">
@@ -76,7 +81,11 @@ async function buildPairingPage() {
 // Ces routes déclenchent des actions sur le PC (lancer OBS) ou exposent son
 // état : réservées à la machine locale (page /desktop ouverte depuis l'icône),
 // jamais au téléphone.
-const isLoopback = (req) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+// Le contrôle de l'en-tête Host bloque le DNS rebinding (une page web qui
+// ferait résoudre son domaine vers 127.0.0.1 pour lire /api/session).
+const isLoopback = (req) =>
+  ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) &&
+  /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(req.headers.host || '');
 
 export function createStaticServer({ getStatus, launchObs }) {
   return createServer(async (req, res) => {
@@ -92,6 +101,10 @@ export function createStaticServer({ getStatus, launchObs }) {
         res.end(JSON.stringify(obj));
       };
       if (urlPath === '/api/status' && req.method === 'GET') return json(getStatus());
+      // La console PC (/desktop) s'authentifie seule : token servi uniquement
+      // à la boucle locale, jamais au LAN.
+      if (urlPath === '/api/session' && req.method === 'GET') return json({ token: config.localWs.token });
+      if (urlPath === '/api/pairing' && req.method === 'GET') return json(await buildPairingData());
       if (urlPath === '/api/obs/launch' && req.method === 'POST') return json(await launchObs());
       res.writeHead(404);
       return res.end('Not found');

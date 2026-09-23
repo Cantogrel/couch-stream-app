@@ -451,9 +451,17 @@ async function fetchScreenshot() {
   try {
     const { dataUrl } = await cmd('obs.getScreenshot');
     $('livePreview').src = dataUrl;
-    $('livePreviewStatus').textContent = '';
+    $('livePreview').classList.remove('hidden');
+    $('livePreviewPlaceholder').classList.add('hidden');
   } catch (err) {
-    $('livePreviewStatus').textContent = 'aperçu indisponible: ' + err.message;
+    // Pas d'image cassée : on masque l'<img> et on explique.
+    $('livePreview').classList.add('hidden');
+    $('livePreviewPlaceholder').classList.remove('hidden');
+    const noObs = /OBS|connect|null|undefined/i.test(err.message);
+    $('livePreviewTitle').textContent = noObs ? "OBS n'est pas connecté" : 'Aperçu indisponible';
+    $('livePreviewStatus').textContent = noObs
+      ? "L'aperçu reviendra tout seul dès qu'OBS sera ouvert sur le PC."
+      : err.message;
   }
 }
 

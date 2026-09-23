@@ -190,12 +190,12 @@ export class ObsController extends EventEmitter {
   // ce qui part réellement à l'antenne (bascule automatiquement avec
   // obs.switchScene). Résolution/qualité volontairement basses — un aperçu
   // sur LAN Wi-Fi rafraîchi toutes les quelques secondes, pas un flux.
-  async getScreenshot() {
+  async getScreenshot(width = 480) {
     const { currentProgramSceneName } = await this._call('GetCurrentProgramScene');
     const { imageData } = await this._call('GetSourceScreenshot', {
       sourceName: currentProgramSceneName,
       imageFormat: 'jpeg',
-      imageWidth: 480,
+      imageWidth: width,
       imageCompressionQuality: 55,
     });
     return imageData;

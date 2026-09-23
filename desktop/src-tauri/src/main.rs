@@ -147,13 +147,12 @@ fn main() {
             supervise(app.handle().clone(), svc.clone(), dir.clone());
 
             let port = local_port(&dir);
-            let state = MenuItem::with_id(app, "state", "État et actions (OBS…)", true, None::<&str>)?;
-            let pair = MenuItem::with_id(app, "pair", "Afficher le QR de pairing", true, None::<&str>)?;
-            let dash = MenuItem::with_id(app, "dash", "Ouvrir le tableau de bord", true, None::<&str>)?;
+            let state = MenuItem::with_id(app, "state", "Ouvrir la console", true, None::<&str>)?;
+            let pair = MenuItem::with_id(app, "pair", "Jumeler un téléphone (QR)", true, None::<&str>)?;
             let logs = MenuItem::with_id(app, "logs", "Ouvrir le dossier de données", true, None::<&str>)?;
             let auto = CheckMenuItem::with_id(app, "auto", "Démarrer avec Windows", true, app.autolaunch().is_enabled().unwrap_or(false), None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quitter", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&state, &pair, &dash, &logs, &PredefinedMenuItem::separator(app)?, &auto, &PredefinedMenuItem::separator(app)?, &quit])?;
+            let menu = Menu::with_items(app, &[&state, &pair, &logs, &PredefinedMenuItem::separator(app)?, &auto, &PredefinedMenuItem::separator(app)?, &quit])?;
 
             let data = dir.clone();
             let svc_quit = svc.clone();
@@ -172,8 +171,7 @@ fn main() {
                 })
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "state" => open_service_page(app, &data, port, "/desktop"),
-                    "pair" => open_service_page(app, &data, port, "/pair"),
-                    "dash" => open_service_page(app, &data, port, "/"),
+                    "pair" => open_service_page(app, &data, port, "/desktop#pair"),
                     "logs" => open_url(app, &data.to_string_lossy()),
                     "auto" => {
                         let al = app.autolaunch();

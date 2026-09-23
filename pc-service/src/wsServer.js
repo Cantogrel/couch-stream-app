@@ -30,7 +30,11 @@ export class LocalWsServer {
     this.wss = new WebSocketServer({ server: this.httpServer });
     this.httpServer.listen(this.port);
 
-    this.wss.on('connection', (ws) => this._handleConnection(ws));
+    this.wss.on('connection', (ws, req) => {
+      // Console PC (boucle locale) ≠ téléphone : exclue du compteur de téléphones.
+      ws.isLocal = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+      this._handleConnection(ws);
+    });
 
     // Relaie les évènements OBS et le chat Twitch vers tous les clients
     // authentifiés (dashboard, chat live, notifications).
@@ -51,7 +55,7 @@ export class LocalWsServer {
       obs: { connected: this.obs.connected, lastError: this.obs.lastError },
       twitch: { connected: this.twitchConnected },
       vbcable: { found: Boolean(this.pcmPlayer.device), label: this.pcmPlayer.device?.label ?? null },
-      phones: this.authedClients.size,
+      phones: [...this.authedClients].filter((ws) => !ws.isLocal).length,
     };
   }
 
@@ -210,7 +214,7 @@ export class LocalWsServer {
       case 'audio.getSettings':
         return { jitterBufferMs: this.pcmPlayer.jitterBufferMs };
       case 'obs.getScreenshot':
-        return { dataUrl: await this.obs.getScreenshot() };
+        return { dataUrl: await this.obs.getScreenshot(Math.min(Math.max(Number(payload?.width) || 480, 160), 1280)) };
 
       case 'chat.send':
         return this.chat.sendMessage(payload.message);
