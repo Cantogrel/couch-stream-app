@@ -6,7 +6,9 @@ import { launchObs } from './obsLocator.js';
 const AUTH_TIMEOUT_MS = 5000;
 
 export class LocalWsServer {
-  constructor({ port, token, obs, chat, helix, pcmPlayer, service }) {
+  constructor({ port, token, obs, chat, helix, pcmPlayer, service, devices, identity }) {
+    this.devices = devices;
+    this.identity = identity;
     this.service = service;
     this.twitchConnected = false;
     this.port = port;
@@ -26,7 +28,7 @@ export class LocalWsServer {
   start() {
     // Même port pour les fichiers statiques (public/, testable depuis le
     // téléphone en HTTP) et le WebSocket (upgrade sur le même serveur HTTP).
-    this.httpServer = createStaticServer({ getStatus: () => this.getStatus(), launchObs });
+    this.httpServer = createStaticServer({ getStatus: () => this.getStatus(), launchObs, devices: this.devices, identity: this.identity, onRevoke: (id) => this.disconnectDevice(id), service: this.service });
     this.wss = new WebSocketServer({ server: this.httpServer });
     this.httpServer.listen(this.port);
 
@@ -57,6 +59,11 @@ export class LocalWsServer {
       vbcable: { found: Boolean(this.pcmPlayer.device), label: this.pcmPlayer.device?.label ?? null },
       phones: [...this.authedClients].filter((ws) => !ws.isLocal).length,
     };
+  }
+
+  // Ferme les connexions d'un téléphone dont le jumelage vient d'être révoqué.
+  disconnectDevice(id) {
+    for (const ws of this.authedClients) if (ws.deviceId === id) ws.close(4003, 'jumelage révoqué');
   }
 
   _broadcast(payload) {
@@ -108,8 +115,15 @@ export class LocalWsServer {
     }
 
     if (!conn.authed) {
-      if (msg.type === 'auth' && msg.token === this.token) {
+      // Token partagé historique (console PC, téléphones jumelés avant le
+      // jumelage par code) ou token propre à un appareil jumelé.
+      const device = msg.type === 'auth' && msg.token !== this.token ? this.devices.verify(msg.token) : null;
+      if (msg.type === 'auth' && (msg.token === this.token || device)) {
         conn.authed = true;
+        if (device) {
+          ws.deviceId = device.id;
+          this.devices.touch(device.id);
+        }
         clearTimeout(conn.authTimer);
         this.authedClients.add(ws);
         ws.send(JSON.stringify({ type: 'welcome' }));

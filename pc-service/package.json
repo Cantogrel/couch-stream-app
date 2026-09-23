@@ -13,6 +13,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "bonjour-service": "^1.4.4",
     "dotenv": "^18.0.2",
     "node-web-audio-api": "^2.2.0",
     "obs-websocket-js": "^5.0.8",

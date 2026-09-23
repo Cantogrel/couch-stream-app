@@ -6,6 +6,8 @@ import { HelixClient } from './twitch/helix.js';
 import { LocalWsServer } from './wsServer.js';
 import { PcmPlayer } from './audio/pcmPlayer.js';
 import { learnObsPath } from './obsLocator.js';
+import { DeviceStore, loadIdentity } from './devices.js';
+import { advertise } from './discovery.js';
 
 const SERVICE_VERSION = '0.1.0';
 
@@ -43,8 +45,11 @@ async function main() {
 
   // Le serveur s'abonne aux évènements obs/chat AVANT que ces derniers ne se
   // connectent, pour ne pas rater les évènements "status" initiaux.
-  const server = new LocalWsServer({ port: config.localWs.port, token: config.localWs.token, obs, chat, helix, pcmPlayer, service: { version: SERVICE_VERSION } });
+  const identity = loadIdentity();
+  const devices = new DeviceStore();
+  const server = new LocalWsServer({ port: config.localWs.port, token: config.localWs.token, obs, chat, helix, pcmPlayer, service: { version: SERVICE_VERSION }, devices, identity });
   server.start();
+  const stopAdvertising = advertise({ identity, port: config.localWs.port });
 
   // OBS peut être fermé au démarrage : on ne bloque pas le reste dessus.
   obs.on('status', ({ connected }) => {
@@ -65,6 +70,7 @@ async function main() {
   const shutdown = () => {
     console.log('\nArrêt du service...');
     tokenManager.stop();
+    stopAdvertising();
     pcmPlayer.stop().finally(() => process.exit(0));
   };
   process.on('SIGINT', shutdown);

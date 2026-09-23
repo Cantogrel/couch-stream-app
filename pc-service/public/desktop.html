@@ -76,6 +76,9 @@
   .tabs { display: flex; gap: .3rem; background: #101013; border-radius: 9px; padding: .2rem; margin-bottom: .6rem; }
   .tabs button { flex: 1; background: none; border: none; border-radius: 7px; padding: .4rem; font-size: .82rem; color: var(--dim); }
   .tabs button.active { background: #2a2a32; color: var(--fg); }
+  .dev { display: flex; align-items: center; gap: .6rem; padding: .45rem 0; border-top: 1px solid var(--border); font-size: .85rem; }
+  .dev .info { flex: 1; min-width: 0; } .dev small { display: block; color: var(--dim); font-size: .72rem; }
+  .dev button { background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--bad); font-size: .75rem; padding: .25rem .6rem; }
   .row { display: flex; justify-content: space-between; align-items: center; padding: .4rem 0; border-top: 1px solid var(--border); font-size: .88rem; }
 
   #toast { position: fixed; bottom: 1.2rem; left: 50%; transform: translateX(-50%); background: var(--bad); color: #2a0808; padding: .6rem 1.1rem; border-radius: 8px; font-size: .85rem; z-index: 50; }
@@ -156,6 +159,7 @@
   </div>
   <div id="pairBox"><p>Chargement…</p></div>
   <div id="apkBox" class="hidden"></div>
+  <div id="devBox"></div>
   <div class="row"><span>Téléphones connectés</span><b id="dlgPhones">0</b></div>
   <div class="row"><span>Version du service</span><b id="dlgVersion">–</b></div>
   <div style="text-align:right;margin-top:1rem"><button class="btn" id="dlgClose">Fermer</button></div>

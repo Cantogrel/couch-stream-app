@@ -116,26 +116,33 @@
   <section id="tab-settings" class="tab">
     <div class="card">
       <div class="card-title">Connexion</div>
-      <button id="qrScanBtn" class="btn full">Scanner le QR de pairing</button>
+      <div id="pcInfo" class="pc-info"></div>
+      <button id="qrScanBtn" class="btn full">Jumeler avec le PC (scanner le QR)</button>
       <div id="qrScanner" class="qr-scanner hidden">
         <video id="qrVideo" playsinline autoplay muted></video>
         <div id="qrScanStatus" class="stat-sub"></div>
         <button id="qrCancelBtn" class="btn full">Annuler</button>
       </div>
       <canvas id="qrCanvas" class="hidden"></canvas>
-      <p class="hint">Le QR est affiché par le service PC sur
-        <code>http://&lt;ip-pc&gt;:&lt;port&gt;/pair</code> — remplit hôte/port/token
-        automatiquement, sans les recopier à la main.</p>
-      <label class="field">Hôte PC
-        <input type="text" id="cfgHost" placeholder="192.168.1.x">
+      <p class="hint">Sur le PC : clic sur l'icône Couch Stream dans la zone de
+        notification, puis « Téléphone &amp; infos » pour afficher le QR.</p>
+      <button id="findPcBtn" class="btn full">Chercher le PC sur le réseau</button>
+      <label class="field">Nom de ce téléphone (affiché sur le PC)
+        <input type="text" id="cfgDeviceName" maxlength="40">
       </label>
-      <label class="field">Port
-        <input type="text" id="cfgPort" placeholder="8765">
-      </label>
-      <label class="field">Token
-        <input type="password" id="cfgToken" placeholder="LOCAL_WS_TOKEN">
-      </label>
-      <button id="saveConnBtn" class="btn full">Enregistrer et connecter</button>
+      <details class="advanced">
+        <summary>Saisie manuelle</summary>
+        <label class="field">Hôte PC
+          <input type="text" id="cfgHost" placeholder="192.168.1.x">
+        </label>
+        <label class="field">Port
+          <input type="text" id="cfgPort" placeholder="8765">
+        </label>
+        <label class="field">Token
+          <input type="password" id="cfgToken" placeholder="token">
+        </label>
+        <button id="saveConnBtn" class="btn full">Enregistrer et connecter</button>
+      </details>
     </div>
 
     <div class="card">

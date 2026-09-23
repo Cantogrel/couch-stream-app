@@ -12,6 +12,9 @@ const defaultSettings = () => ({
   host: location.protocol.startsWith('http') ? location.hostname : '',
   port: location.protocol.startsWith('http') && location.port ? location.port : '8765',
   token: '',
+  pcId: '',
+  pcName: '',
+  deviceName: 'Mon téléphone',
   notifChat: false,
   notifCooldownS: 45,
   notifMentions: false,
@@ -44,6 +47,9 @@ const app = {
   ws: null,
   manualDisconnect: false,
   reconnectTimer: null,
+  failStreak: 0,
+  discovering: false,
+  lastDiscoveryAt: 0,
   nextId: 1,
   pending: new Map(),
   obs: { scenes: [], currentScene: null, streaming: false, droppedFrames: null, totalFrames: null, congestion: null, micMuted: null, micVolume: null },
@@ -126,7 +132,20 @@ function connect() {
   ws.onclose = (e) => {
     setConnected(false);
     log(`[connexion] fermée (code=${e.code} ${e.reason || ''})`);
+    // 4003 : token refusé (jumelage révoqué sur le PC, ou PC réinitialisé).
+    // Réessayer en boucle n'y changerait rien.
+    if (e.code === 4003 && !app.manualDisconnect) {
+      app.manualDisconnect = true;
+      app.settings.token = '';
+      saveSettings(app.settings);
+      populateSettingsForm();
+      renderPcInfo();
+      return toast('Jumelage refusé par le PC : scanne à nouveau le QR');
+    }
     if (!app.manualDisconnect) {
+      // Plusieurs échecs de suite = le PC a sans doute changé d'adresse : on le
+      // cherche sur le réseau avant de retenter.
+      if (++app.failStreak >= 2) rediscover();
       app.reconnectTimer = setTimeout(connect, 3000);
     }
   };
@@ -139,6 +158,8 @@ function connect() {
 function handleMessage(msg) {
   switch (msg.type) {
     case 'welcome':
+      app.failStreak = 0;
+      learnPc();
       setConnected(true);
       log('[connexion] authentifié');
       // Le PC oublie le buffer de gigue à son redémarrage : on réapplique le
@@ -595,7 +616,7 @@ async function startQrScan() {
   }
   $('qrVideo').srcObject = qr.stream;
   $('qrScanner').classList.remove('hidden');
-  $('qrScanStatus').textContent = 'Vise le QR affiché sur /pair…';
+  $('qrScanStatus').textContent = 'Vise le QR affiché sur le PC…';
   tickQrScan();
 }
 
@@ -622,24 +643,162 @@ function tickQrScan() {
   qr.raf = requestAnimationFrame(tickQrScan);
 }
 
-function onQrDecoded(text) {
+async function onQrDecoded(text) {
   stopQrScan();
   let data;
   try {
     data = JSON.parse(text);
   } catch {
-    return toast('QR invalide (pas du JSON de pairing)');
+    return toast('QR invalide (pas un QR de pairing)');
   }
-  if (!data.host || !data.port || !data.token) return toast('QR invalide (champs manquants)');
-  $('cfgHost').value = data.host;
-  $('cfgPort').value = String(data.port);
-  $('cfgToken').value = data.token;
-  toast('Pairing scanné — connexion…');
-  $('saveConnBtn').click();
+  if (!data.host || !data.port) return toast('QR invalide (champs manquants)');
+
+  // Ancien format {host, port, token} (PC non mis à jour) : accepté tel quel.
+  if (!data.code) {
+    if (!data.token) return toast('QR invalide (champs manquants)');
+    Object.assign(app.settings, { host: data.host, port: String(data.port), token: data.token });
+    return finishPairing('Pairing scanné — connexion…');
+  }
+
+  // QR à code unique : échangé contre un token propre à ce téléphone.
+  toast('Jumelage en cours…');
+  try {
+    const res = await fetch(`http://${data.host}:${data.port}/api/pair`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ code: data.code, name: app.settings.deviceName }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || 'refusé');
+    Object.assign(app.settings, { host: data.host, port: String(data.port), token: body.token, pcId: body.pcId, pcName: body.name });
+    finishPairing(`Jumelé avec ${body.name}`);
+  } catch (err) {
+    toast('Jumelage échoué : ' + err.message + ' (le QR expire au bout de 10 min, réaffiche-le sur le PC)');
+  }
+}
+
+function finishPairing(message) {
+  saveSettings(app.settings);
+  populateSettingsForm();
+  renderPcInfo();
+  toast(message);
+  if (app.ws) { app.manualDisconnect = true; app.ws.close(); }
+  app.failStreak = 0;
+  connect();
+}
+
+// ---------- découverte du PC (IP qui change) ----------
+
+const DISCOVERY_COOLDOWN_MS = 30000;
+
+function renderPcInfo() {
+  const el = $('pcInfo');
+  if (!app.settings.token) {
+    el.className = 'pc-info none';
+    el.textContent = 'Aucun PC jumelé.';
+  } else {
+    el.className = 'pc-info';
+    el.innerHTML = `PC jumelé : <b>${escapeHtml(app.settings.pcName || 'PC')}</b> (${escapeHtml(app.settings.host)})`;
+  }
+}
+
+// Interroge /hello : identité du PC (aucun secret). null si ce n'est pas un
+// service Couch Stream ou s'il ne répond pas assez vite.
+async function probeHello(host, port, timeoutMs = 900) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const res = await fetch(`http://${host}:${port}/hello`, { signal: ctl.signal, cache: 'no-store' });
+    const info = await res.json();
+    return info.app === 'couch-stream' ? info : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// mDNS natif (plugin Discovery) : marche même si le sous-réseau a changé.
+async function discoverViaMdns() {
+  if (!isNative() || !window.Capacitor.Plugins.Discovery) return [];
+  try {
+    const { services } = await window.Capacitor.Plugins.Discovery.find({ timeoutMs: 3500 });
+    return services || [];
+  } catch (err) {
+    log('[découverte] mDNS: ' + err.message);
+    return [];
+  }
+}
+
+// Repli : balayage du /24 de la dernière adresse connue (le cas courant d'un
+// bail DHCP qui change dans le même réseau).
+async function discoverViaSubnetScan() {
+  const m = /^(\d+\.\d+\.\d+)\.\d+$/.exec(app.settings.host || '');
+  if (!m) return [];
+  const port = app.settings.port || '8765';
+  const found = [];
+  const hosts = Array.from({ length: 254 }, (_, i) => `${m[1]}.${i + 1}`);
+  for (let i = 0; i < hosts.length; i += 48) {
+    const batch = await Promise.all(hosts.slice(i, i + 48).map(async (h) => {
+      const info = await probeHello(h, port);
+      return info ? { host: h, port: info.port, id: info.id, name: info.name } : null;
+    }));
+    found.push(...batch.filter(Boolean));
+    if (found.length) break;
+  }
+  return found;
+}
+
+// Renvoie le PC qui correspond à celui jumelé (même id), ou l'unique PC
+// trouvé si on ne connaît pas encore son id (jumelage d'avant cette version).
+function pickPc(services) {
+  if (app.settings.pcId) return services.find((s) => s.id === app.settings.pcId) || null;
+  return services.length === 1 ? services[0] : null;
+}
+
+async function rediscover({ manual = false } = {}) {
+  if (app.discovering) return;
+  if (!manual && Date.now() - app.lastDiscoveryAt < DISCOVERY_COOLDOWN_MS) return;
+  app.discovering = true;
+  app.lastDiscoveryAt = Date.now();
+  if (manual) toast('Recherche du PC…');
+  try {
+    let pc = pickPc(await discoverViaMdns());
+    if (!pc) pc = pickPc(await discoverViaSubnetScan());
+    if (!pc) {
+      log('[découverte] PC introuvable');
+      if (manual) toast('PC introuvable sur le réseau : est-il allumé, sur le même Wi-Fi ?');
+      return;
+    }
+    log(`[découverte] PC retrouvé: ${pc.host}:${pc.port}`);
+    Object.assign(app.settings, { host: pc.host, port: String(pc.port), pcId: pc.id, pcName: pc.name || app.settings.pcName });
+    saveSettings(app.settings);
+    populateSettingsForm();
+    renderPcInfo();
+    if (manual) toast('PC retrouvé : ' + pc.host);
+    clearTimeout(app.reconnectTimer);
+    app.failStreak = 0;
+    if (app.ws) { app.manualDisconnect = true; app.ws.close(); }
+    connect();
+  } finally {
+    app.discovering = false;
+  }
+}
+
+// Jumelage fait avant cette version : on complète l'identité du PC à la
+// première connexion réussie, pour pouvoir le retrouver plus tard.
+async function learnPc() {
+  if (app.settings.pcId) return;
+  const info = await probeHello(app.settings.host, app.settings.port, 2000);
+  if (!info) return;
+  Object.assign(app.settings, { pcId: info.id, pcName: info.name });
+  saveSettings(app.settings);
+  renderPcInfo();
 }
 
 $('qrScanBtn').addEventListener('click', startQrScan);
 $('qrCancelBtn').addEventListener('click', stopQrScan);
+$('findPcBtn').addEventListener('click', () => rediscover({ manual: true }));
 
 // ---------- notifications ----------
 
@@ -990,6 +1149,7 @@ function populateSettingsForm() {
   $('cfgHost').value = app.settings.host;
   $('cfgPort').value = app.settings.port;
   $('cfgToken').value = app.settings.token;
+  $('cfgDeviceName').value = app.settings.deviceName;
   $('cfgNotifChat').checked = app.settings.notifChat;
   $('cfgNotifCooldown').value = app.settings.notifCooldownS;
   $('cfgNotifMentions').checked = app.settings.notifMentions;
@@ -1009,6 +1169,7 @@ function readSettingsForm() {
   app.settings.host = $('cfgHost').value.trim();
   app.settings.port = $('cfgPort').value.trim();
   app.settings.token = $('cfgToken').value.trim();
+  app.settings.deviceName = $('cfgDeviceName').value.trim() || 'Mon téléphone';
   app.settings.notifChat = $('cfgNotifChat').checked;
   app.settings.notifCooldownS = Number($('cfgNotifCooldown').value) || 45;
   app.settings.notifMentions = $('cfgNotifMentions').checked;
@@ -1024,7 +1185,7 @@ function readSettingsForm() {
 // Persiste les réglages de notifications dès qu'ils changent, sans attendre
 // le bouton "Enregistrer et connecter" (qui ne concerne que la connexion).
 for (const id of ['cfgNotifChat', 'cfgNotifCooldown', 'cfgNotifMentions', 'cfgMentionKeywords',
-  'cfgNotifHealth', 'cfgHealthDropPct', 'cfgHealthCongestionPct', 'cfgNotifDisconnect', 'cfgIgnoredUsers']) {
+  'cfgNotifHealth', 'cfgHealthDropPct', 'cfgHealthCongestionPct', 'cfgNotifDisconnect', 'cfgIgnoredUsers', 'cfgDeviceName']) {
   $(id).addEventListener('change', readSettingsForm);
 }
 
@@ -1032,8 +1193,8 @@ for (const id of ['cfgNotifChat', 'cfgNotifCooldown', 'cfgNotifMentions', 'cfgMe
 // obliger à re-scanner le QR de pairing.
 $('resetDefaultsBtn').addEventListener('click', () => {
   if (!confirm('Restaurer les valeurs par défaut (notifications et audio) ?')) return;
-  const { host, port, token } = app.settings;
-  app.settings = { ...defaultSettings(), host, port, token };
+  const { host, port, token, pcId, pcName, deviceName } = app.settings;
+  app.settings = { ...defaultSettings(), host, port, token, pcId, pcName, deviceName };
   saveSettings(app.settings);
   populateSettingsForm();
   applyMicAudioSettings();
@@ -1052,6 +1213,7 @@ $('saveConnBtn').addEventListener('click', () => {
 initServiceWorker();
 ensureNotifChannel();
 populateSettingsForm();
+renderPcInfo();
 populateMicDevices();
 startLivePreview(); // le tableau de bord est l'onglet actif par défaut
 if (app.settings.host && app.settings.port && app.settings.token) {

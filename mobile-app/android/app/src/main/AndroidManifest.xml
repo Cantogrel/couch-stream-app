@@ -65,6 +65,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Découverte mDNS du PC (DiscoveryPlugin) : verrou multicast Wi-Fi. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- Vérifier/refléter l'accès "Ne pas déranger" (accordé manuellement par
          l'utilisateur, jamais par un dialogue runtime) — utilisé par le canal
          d'alerte chat pour sonner même en DND/silencieux. -->

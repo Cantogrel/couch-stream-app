@@ -294,21 +294,53 @@ function pane(name) {
 }
 document.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => pane(b.dataset.pane)));
 
-async function openDialog() {
-  pane('pair');
-  $('dlg').showModal();
+const ago = (t) => {
+  const m = Math.round((Date.now() - t) / 60000);
+  return m < 1 ? "à l'instant" : m < 60 ? `il y a ${m} min` : m < 1440 ? `il y a ${Math.round(m / 60)} h` : `il y a ${Math.round(m / 1440)} j`;
+};
+
+async function loadDevices() {
+  try {
+    const list = await (await fetch('/api/devices', { cache: 'no-store' })).json();
+    $('devBox').innerHTML = list.length
+      ? '<div class="card-title" style="margin-top:.8rem">Téléphones jumelés</div>' + list.map((d) =>
+        `<div class="dev"><div class="info"><b>${esc(d.name)}</b><small>vu ${ago(d.lastSeenAt)}</small></div><button data-id="${esc(d.id)}">Oublier</button></div>`).join('')
+      : '';
+    $('devBox').querySelectorAll('button').forEach((b) => (b.onclick = async () => {
+      if (!confirm('Oublier ce téléphone ? Il devra être jumelé à nouveau.')) return;
+      await fetch('/api/devices/' + encodeURIComponent(b.dataset.id), { method: 'DELETE' });
+      loadDevices();
+    }));
+  } catch { /* liste indisponible */ }
+}
+
+async function loadPairing() {
   try {
     const p = await (await fetch('/api/pairing', { cache: 'no-store' })).json();
     $('pairBox').innerHTML = p.qrDataUrl
-      ? `<p>Scanne ce code depuis l'app, dans <b>Réglages → Scanner le QR de pairing</b>.</p><img src="${p.qrDataUrl}" alt="QR de pairing"><p>Ou saisis à la main : hôte <code>${esc(p.host)}</code>, port <code>${esc(p.port)}</code>.</p>`
+      ? `<p>Scanne ce code depuis l'app, dans <b>Réglages → Scanner le QR de pairing</b>. Il est à usage unique et se renouvelle tout seul.</p><img src="${p.qrDataUrl}" alt="QR de pairing">`
       : "<p>Impossible de détecter l'IP de ce PC sur le réseau — vérifie la connexion.</p>";
     $('apkBox').innerHTML = !p.apk
       ? "<p>Le fichier de l'app n'est pas inclus dans cette installation.</p>"
       : `<p>Sur le téléphone (même Wi-Fi), scanne ce code avec l'appareil photo pour télécharger l'app (${p.apk.sizeMb} Mo).</p><img src="${p.apk.qrDataUrl}" alt="QR de téléchargement"><p>Ou ouvre <code>${esc(p.apk.url)}</code>. Android demandera d'autoriser l'installation depuis ce navigateur.</p>`;
   } catch { $('pairBox').innerHTML = '<p>Le service ne répond pas.</p>'; }
 }
+
+let dlgTimer = null;
+async function openDialog() {
+  pane('pair');
+  $('dlg').showModal();
+  loadPairing();
+  loadDevices();
+  // Code valable 10 min : on le renouvelle avant l'expiration, et on rafraîchit
+  // la liste (un jumelage réussi doit apparaître sans rouvrir la fenêtre).
+  clearInterval(dlgTimer);
+  let n = 0;
+  dlgTimer = setInterval(() => { loadDevices(); if (++n % 40 === 0) loadPairing(); }, 15000 / 5);
+}
 $('settingsBtn').onclick = openDialog;
 $('dlgClose').onclick = () => $('dlg').close();
+$('dlg').addEventListener('close', () => clearInterval(dlgTimer));
 if (location.hash === '#pair') openDialog();
 
 pollStatus();

@@ -382,3 +382,9 @@ main {
 .preview-placeholder svg { width: 2.4rem; height: 2.4rem; opacity: .6; animation: previewPulse 2.4s ease-in-out infinite; }
 @keyframes previewPulse { 0%, 100% { opacity: .35; } 50% { opacity: .8; } }
 .preview-placeholder b { color: var(--fg); font-size: .95rem; }
+
+.pc-info { font-size: .9rem; margin-bottom: .4rem; }
+.pc-info b { color: var(--accent); }
+.pc-info.none { color: var(--fg-dim); }
+details.advanced { margin-top: .8rem; }
+details.advanced summary { color: var(--fg-dim); font-size: .8rem; cursor: pointer; margin-bottom: .6rem; }

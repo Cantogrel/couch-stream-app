@@ -60,30 +60,29 @@ async function findApk() {
   return null;
 }
 
-async function buildPairingData() {
+// Le QR porte un code de jumelage à usage unique (10 min), jamais le token :
+// le téléphone l'échange contre son propre token via POST /api/pair.
+async function buildPairingData({ devices, identity }) {
   const host = getLanAddress();
-  const payload = JSON.stringify({ host, port: config.localWs.port, token: config.localWs.token });
+  const port = config.localWs.port;
+  const payload = JSON.stringify({ v: 2, host, port, pcId: identity.id, name: identity.name, code: devices.createPairingCode() });
   const qrDataUrl = host ? await QRCode.toDataURL(payload, { margin: 1, scale: 6 }) : null;
   const apk = await findApk();
-  const apkUrl = host ? `http://${host}:${config.localWs.port}/app.apk` : null;
+  const apkUrl = host ? `http://${host}:${port}/app.apk` : null;
   return {
     host,
-    port: config.localWs.port,
+    port,
     qrDataUrl,
     apk: apk && apkUrl ? { url: apkUrl, sizeMb: (apk.size / 1048576).toFixed(1), qrDataUrl: await QRCode.toDataURL(apkUrl, { margin: 1, scale: 6 }) } : null,
   };
 }
 
-async function buildPairingPage() {
-  const { host, qrDataUrl } = await buildPairingData();
+async function buildPairingPage(ctx) {
+  const { host, qrDataUrl } = await buildPairingData(ctx);
 
   const body = host
     ? `<img src="${qrDataUrl}" alt="QR de pairing" width="280" height="280">
-       <p>Scanne ce code depuis l'app (Réglages → Scanner QR).</p>
-       <p class="fallback">Ou saisis manuellement :<br>
-       Hôte : <code>${host}</code><br>
-       Port : <code>${config.localWs.port}</code><br>
-       Token : <code>${config.localWs.token}</code></p>`
+       <p>Scanne ce code depuis l'app (Réglages → Scanner le QR de pairing). Il expire au bout de 10 minutes.</p>`
     : `<p>Impossible de détecter une IP LAN sur ce PC — vérifie la connexion réseau.</p>`;
 
   return `<!DOCTYPE html>
@@ -113,9 +112,43 @@ const isLoopback = (req) =>
   ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) &&
   /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(req.headers.host || '');
 
-export function createStaticServer({ getStatus, launchObs }) {
+const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type' };
+
+async function readBody(req, limit = 4096) {
+  let raw = '';
+  for await (const chunk of req) {
+    raw += chunk;
+    if (raw.length > limit) throw new Error('corps trop gros');
+  }
+  return raw ? JSON.parse(raw) : {};
+}
+
+export function createStaticServer({ getStatus, launchObs, devices, identity, onRevoke, service }) {
   return createServer(async (req, res) => {
     const urlPath = req.url === '/' ? '/index.html' : req.url === '/desktop' ? '/desktop.html' : req.url.split('?')[0];
+
+    // Routes LAN pour le téléphone (CORS : l'app tourne sur http://localhost).
+    // Le téléphone s'y identifie sans token : /hello ne révèle que l'identité
+    // du PC, /api/pair exige un code à usage unique affiché sur ce PC.
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, CORS);
+      return res.end();
+    }
+    if (urlPath === '/hello' && req.method === 'GET') {
+      res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ app: 'couch-stream', id: identity.id, name: identity.name, version: service.version, port: config.localWs.port }));
+    }
+    if (urlPath === '/api/pair' && req.method === 'POST') {
+      let result = null;
+      try {
+        const body = await readBody(req);
+        result = devices.redeem(String(body.code || ''), body.name);
+      } catch {
+        // corps invalide : traité comme un code refusé
+      }
+      res.writeHead(result ? 200 : 403, { ...CORS, 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify(result ? { token: result.token, pcId: identity.id, name: identity.name } : { error: 'code invalide ou expiré' }));
+    }
 
     if (urlPath.startsWith('/api/')) {
       if (!isLoopback(req)) {
@@ -130,7 +163,14 @@ export function createStaticServer({ getStatus, launchObs }) {
       // La console PC (/desktop) s'authentifie seule : token servi uniquement
       // à la boucle locale, jamais au LAN.
       if (urlPath === '/api/session' && req.method === 'GET') return json({ token: config.localWs.token });
-      if (urlPath === '/api/pairing' && req.method === 'GET') return json(await buildPairingData());
+      if (urlPath === '/api/pairing' && req.method === 'GET') return json(await buildPairingData({ devices, identity }));
+      if (urlPath === '/api/devices' && req.method === 'GET') return json(devices.list());
+      if (urlPath.startsWith('/api/devices/') && req.method === 'DELETE') {
+        const id = decodeURIComponent(urlPath.slice('/api/devices/'.length));
+        const ok = devices.revoke(id);
+        if (ok) onRevoke(id);
+        return json({ ok });
+      }
       if (urlPath === '/api/obs/launch' && req.method === 'POST') return json(await launchObs());
       res.writeHead(404);
       return res.end('Not found');
@@ -151,7 +191,13 @@ export function createStaticServer({ getStatus, launchObs }) {
     }
 
     if (urlPath === '/pair') {
-      const html = await buildPairingPage();
+      // Réservée à ce PC : afficher un code de jumelage à quelqu'un d'autre
+      // sur le réseau reviendrait à lui donner accès.
+      if (!isLoopback(req)) {
+        res.writeHead(403);
+        return res.end('Forbidden');
+      }
+      const html = await buildPairingPage({ devices, identity });
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       return res.end(html);
     }
