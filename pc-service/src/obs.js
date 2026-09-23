@@ -138,32 +138,50 @@ export class ObsController extends EventEmitter {
   // la liste des périphériques d'OBS, jamais codé en dur (voir
   // decision-vbcable-obs-source-via-websocket-api).
   async ensureMicSource(deviceLabelMatch = 'CABLE Output') {
-    const { propertyItems } = await this._call('GetInputPropertiesListPropertyItems', {
-      inputKind: 'wasapi_input_capture',
-      propertyName: 'device_id',
-    });
-    const device = propertyItems.find((i) => String(i.itemName).includes(deviceLabelMatch));
-    if (!device) throw new Error(`Périphérique « ${deviceLabelMatch} » introuvable dans OBS (VB-Cable installé ? redémarre OBS après l'installation).`);
-
     const { inputs } = await this._call('GetInputList');
-    if (inputs.some((i) => i.inputName === MIC_INPUT_NAME)) {
+    const existed = inputs.some((i) => i.inputName === MIC_INPUT_NAME);
+    let scenesCount = 0;
+
+    // GetInputPropertiesListPropertyItems exige une source existante (inputName) :
+    // on ne peut pas lister les périphériques « par type ». Sur un OBS neuf, on
+    // crée donc d'abord la source (périphérique par défaut), puis on la branche
+    // sur VB-Cable — et on la supprime si VB-Cable est introuvable, pour ne
+    // jamais laisser une source qui capterait le vrai micro.
+    if (!existed) {
+      const { scenes } = await this._call('GetSceneList');
+      const names = scenes.map((s) => s.sceneName);
+      if (!names.length) throw new Error("Aucune scène dans OBS : crée-en une d'abord.");
+      await this._call('CreateInput', {
+        sceneName: names[0],
+        inputName: MIC_INPUT_NAME,
+        inputKind: 'wasapi_input_capture',
+        inputSettings: {},
+        sceneItemEnabled: true,
+      });
+      scenesCount = names.length;
+      try {
+        for (const sceneName of names.slice(1)) {
+          await this._call('CreateSceneItem', { sceneName, sourceName: MIC_INPUT_NAME, sceneItemEnabled: true });
+        }
+      } catch (err) {
+        await this._call('RemoveInput', { inputName: MIC_INPUT_NAME }).catch(() => {});
+        throw err;
+      }
+    }
+
+    try {
+      const { propertyItems } = await this._call('GetInputPropertiesListPropertyItems', {
+        inputName: MIC_INPUT_NAME,
+        propertyName: 'device_id',
+      });
+      const device = propertyItems.find((i) => String(i.itemName).includes(deviceLabelMatch));
+      if (!device) throw new Error(`Périphérique « ${deviceLabelMatch} » introuvable dans OBS (VB-Cable installé ? redémarre le PC après l'installation).`);
       await this._call('SetInputSettings', { inputName: MIC_INPUT_NAME, inputSettings: { device_id: device.itemValue } });
-      return { created: false, name: MIC_INPUT_NAME };
+    } catch (err) {
+      if (!existed) await this._call('RemoveInput', { inputName: MIC_INPUT_NAME }).catch(() => {});
+      throw err;
     }
-    const { scenes } = await this._call('GetSceneList');
-    const names = scenes.map((s) => s.sceneName);
-    if (!names.length) throw new Error("Aucune scène dans OBS : crée-en une d'abord.");
-    await this._call('CreateInput', {
-      sceneName: names[0],
-      inputName: MIC_INPUT_NAME,
-      inputKind: 'wasapi_input_capture',
-      inputSettings: { device_id: device.itemValue },
-      sceneItemEnabled: true,
-    });
-    for (const sceneName of names.slice(1)) {
-      await this._call('CreateSceneItem', { sceneName, sourceName: MIC_INPUT_NAME, sceneItemEnabled: true });
-    }
-    return { created: true, name: MIC_INPUT_NAME, scenes: names.length };
+    return existed ? { created: false, name: MIC_INPUT_NAME } : { created: true, name: MIC_INPUT_NAME, scenes: scenesCount };
   }
 
   async hasMicSource() {
