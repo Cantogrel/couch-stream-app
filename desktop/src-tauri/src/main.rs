@@ -186,13 +186,18 @@ fn main() {
 
             let port = local_port(&dir);
 
-            // Vérification automatique 60 s après le démarrage (jamais bloquante).
+            // Vérification automatique 60 s après le démarrage, puis toutes les 6 h :
+            // l'app tourne des jours entiers (démarrage avec Windows), et un réseau
+            // absent au démarrage ne doit pas la priver de mises à jour (jamais bloquant).
             {
                 let handle = app.handle().clone();
                 let dir = dir.clone();
                 thread::spawn(move || {
                     thread::sleep(Duration::from_secs(60));
-                    check_update(handle, dir, false);
+                    loop {
+                        check_update(handle.clone(), dir.clone(), false);
+                        thread::sleep(Duration::from_secs(6 * 3600));
+                    }
                 });
             }
 
@@ -206,7 +211,11 @@ fn main() {
                         let addr = std::net::SocketAddr::from(([127, 0, 0, 1], local_port(&dir)));
                         if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(400)).is_ok() {
                             thread::sleep(Duration::from_secs(2)); // laisse le service écrire setup.json s'il migre une ancienne config
-                            if !dir.join("setup.json").exists() {
+                            // Assistant absent ou inachevé (le dossier de données survit à une désinstallation).
+                            let done = fs::read_to_string(dir.join("setup.json"))
+                                .map(|s| s.replace(' ', "").contains("\"completed\":true"))
+                                .unwrap_or(false);
+                            if !done {
                                 open_service_page(&handle, &dir, port, "/setup");
                             }
                             return;

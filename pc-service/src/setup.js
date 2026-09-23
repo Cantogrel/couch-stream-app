@@ -94,6 +94,10 @@ export class Setup {
     }
 
     if (path === '/api/setup/twitch/start' && method === 'POST') {
+      // Marque l'assistant « en cours » avant que des jetons existent : sinon un
+      // redémarrage du service au milieu de l'assistant les prendrait pour une
+      // ancienne installation et le déclarerait terminé (voir index.js).
+      if (!this.hasSetupFile()) this.markCompleted(false);
       try {
         return { ok: true, ...(await this.deviceAuth.start()) };
       } catch (err) {
