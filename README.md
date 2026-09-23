@@ -58,12 +58,13 @@ Virtual Cable, Node.js, Capacitor.
 - **Phase 4 — Empaquetage Capacitor** (clôturée et validée sur téléphone
   réel) : foreground service micro natif, notifications, pairing QR code,
   build APK. Voir `mobile-app/README.md`.
-- **Phase 5 — Finitions** (implémentée, à valider en live réel) : santé du
+- **Phase 5 — Finitions** (clôturée et validée sur téléphone réel, 2026-09-23) : santé du
   stream (débit kb/s, fps, CPU OBS, frames perdues, congestion, polling 2s),
   règles de notification (alerte santé sur tendance 60s avec seuils
   réglables, alerte déconnexion OBS/Twitch en live, pseudos ignorés),
   réglages audio (gain d'entrée 0-300 %, limiteur, buffer de gigue PC
-  réglable depuis le téléphone). Le redémarrage du service PC est requis
+  réglable depuis le téléphone), bouton de restauration des valeurs par
+  défaut. Le redémarrage du service PC est requis
   (nouvelles commandes `obs.getHealth`, `audio.setJitterBuffer`).
 
 Voir aussi le graphe Graphify (`E:\Super IA\Graphify\Couch-Stream-App\graphify-out\`)
