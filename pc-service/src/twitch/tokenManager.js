@@ -1,7 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { ENV_PATH } from '../paths.js';
-
+import { updateSecrets } from '../secureStore.js';
 
 const TOKEN_URL = 'https://id.twitch.tv/oauth2/token';
 const VALIDATE_URL = 'https://id.twitch.tv/oauth2/validate';
@@ -12,16 +10,28 @@ const VALIDATE_URL = 'https://id.twitch.tv/oauth2/validate';
 const REFRESH_MARGIN_SECONDS = 300;
 
 export class TokenManager extends EventEmitter {
-  constructor({ clientId, clientSecret, accessToken, refreshToken }) {
+  constructor({ clientId, clientSecret }) {
     super();
     this.clientId = clientId;
     this.clientSecret = clientSecret;
-    this.accessToken = accessToken;
-    this.refreshToken = refreshToken;
+    this.accessToken = null;
+    this.refreshToken = null;
     this._timer = null;
   }
 
+  get hasTokens() {
+    return Boolean(this.accessToken && this.refreshToken);
+  }
+
+  // Appelé au démarrage (jetons du magasin chiffré) et à la fin de la
+  // connexion Twitch de l'assistant.
+  setTokens({ accessToken, refreshToken }) {
+    this.accessToken = accessToken;
+    this.refreshToken = refreshToken;
+  }
+
   async start() {
+    if (!this.hasTokens) throw new Error('aucun jeton Twitch (connexion à faire dans l’assistant)');
     try {
       const res = await fetch(VALIDATE_URL, {
         headers: { Authorization: `OAuth ${this.accessToken}` },
@@ -39,13 +49,15 @@ export class TokenManager extends EventEmitter {
   }
 
   async refresh() {
-    const body = new URLSearchParams({
+    const params = {
       grant_type: 'refresh_token',
       refresh_token: this.refreshToken,
       client_id: this.clientId,
-      client_secret: this.clientSecret,
-    });
-    const res = await fetch(TOKEN_URL, { method: 'POST', body });
+    };
+    // Client public (flux Device Code) : pas de secret. Présent seulement pour
+    // une ancienne app « confidentielle ».
+    if (this.clientSecret) params.client_secret = this.clientSecret;
+    const res = await fetch(TOKEN_URL, { method: 'POST', body: new URLSearchParams(params) });
     if (!res.ok) {
       const text = await res.text();
       throw new Error(`Refresh du token Twitch échoué (${res.status}): ${text}`);
@@ -53,7 +65,7 @@ export class TokenManager extends EventEmitter {
     const data = await res.json();
     this.accessToken = data.access_token;
     this.refreshToken = data.refresh_token;
-    this._persist();
+    await this.persist();
     this._scheduleRefresh(data.expires_in);
     console.log('[twitch] token rafraîchi, prochaine expiration dans', data.expires_in, 's');
     this.emit('refreshed', this.accessToken);
@@ -69,14 +81,13 @@ export class TokenManager extends EventEmitter {
     this._timer.unref();
   }
 
-  _persist() {
+  // Le refresh token change à chaque rafraîchissement : le perdre = devoir
+  // se reconnecter, d'où l'écriture immédiate dans le magasin chiffré.
+  async persist() {
     try {
-      let content = readFileSync(ENV_PATH, 'utf8');
-      content = content.replace(/^TWITCH_ACCESS_TOKEN=.*$/m, `TWITCH_ACCESS_TOKEN=${this.accessToken}`);
-      content = content.replace(/^TWITCH_REFRESH_TOKEN=.*$/m, `TWITCH_REFRESH_TOKEN=${this.refreshToken}`);
-      writeFileSync(ENV_PATH, content);
+      await updateSecrets({ twitchAccessToken: this.accessToken, twitchRefreshToken: this.refreshToken });
     } catch (err) {
-      console.error('[twitch] échec de la persistance des tokens dans .env:', err.message);
+      console.error('[twitch] échec de la persistance des jetons:', err.message);
     }
   }
 

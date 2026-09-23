@@ -147,12 +147,33 @@ fn main() {
             supervise(app.handle().clone(), svc.clone(), dir.clone());
 
             let port = local_port(&dir);
+
+            // Premier lancement (pas d'assistant terminé) : ouvre l'assistant dès
+            // que le service répond, au lieu de laisser une icône muette.
+            {
+                let handle = app.handle().clone();
+                let dir = dir.clone();
+                thread::spawn(move || {
+                    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+                    for _ in 0..120 {
+                        if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(400)).is_ok() {
+                            thread::sleep(Duration::from_secs(2)); // laisse le service écrire setup.json s'il migre une ancienne config
+                            if !dir.join("setup.json").exists() {
+                                open_service_page(&handle, &dir, port, "/setup");
+                            }
+                            return;
+                        }
+                        thread::sleep(Duration::from_millis(500));
+                    }
+                });
+            }
             let state = MenuItem::with_id(app, "state", "Ouvrir la console", true, None::<&str>)?;
+            let setup_item = MenuItem::with_id(app, "setup", "Assistant de configuration", true, None::<&str>)?;
             let pair = MenuItem::with_id(app, "pair", "Jumeler un téléphone (QR)", true, None::<&str>)?;
             let logs = MenuItem::with_id(app, "logs", "Ouvrir le dossier de données", true, None::<&str>)?;
             let auto = CheckMenuItem::with_id(app, "auto", "Démarrer avec Windows", true, app.autolaunch().is_enabled().unwrap_or(false), None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quitter", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&state, &pair, &logs, &PredefinedMenuItem::separator(app)?, &auto, &PredefinedMenuItem::separator(app)?, &quit])?;
+            let menu = Menu::with_items(app, &[&state, &pair, &setup_item, &logs, &PredefinedMenuItem::separator(app)?, &auto, &PredefinedMenuItem::separator(app)?, &quit])?;
 
             let data = dir.clone();
             let svc_quit = svc.clone();
@@ -171,6 +192,7 @@ fn main() {
                 })
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "state" => open_service_page(app, &data, port, "/desktop"),
+                    "setup" => open_service_page(app, &data, port, "/setup"),
                     "pair" => open_service_page(app, &data, port, "/desktop#pair"),
                     "logs" => open_url(app, &data.to_string_lossy()),
                     "auto" => {

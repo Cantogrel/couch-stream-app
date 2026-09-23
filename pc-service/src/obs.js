@@ -4,7 +4,7 @@ import OBSWebSocket from 'obs-websocket-js';
 // Nom de la source ajoutée en Phase 0 (voir
 // decision-vbcable-obs-source-via-websocket-api dans le vault) — la source
 // micro téléphone que l'app doit pouvoir muter/démuter.
-const MIC_INPUT_NAME = process.env.MIC_INPUT_NAME || 'Micro Téléphone (Couch Stream App)';
+export const MIC_INPUT_NAME = process.env.MIC_INPUT_NAME || 'Micro Téléphone (Couch Stream App)';
 
 // obs-websocket-js ne rejette pas les requêtes en vol quand la connexion
 // tombe (ex. OBS fermé) — sans ça, une requête lancée juste avant la
@@ -113,6 +113,55 @@ export class ObsController extends EventEmitter {
       this._attempt();
     }, 5000);
     this._reconnectTimer.unref();
+  }
+
+  // Nouveaux identifiants saisis dans l'assistant : on les applique et on
+  // relance la connexion tout de suite au lieu d'attendre le prochain essai.
+  setCredentials({ url, password }) {
+    if (url) this.url = url;
+    if (password !== undefined) this.password = password;
+    clearTimeout(this._reconnectTimer);
+    this._reconnectTimer = null;
+    if (!this.connected) this._attempt();
+  }
+
+  // Crée la source micro (capture du côté « CABLE Output » de VB-Cable) dans
+  // toutes les scènes, ou resynchronise son périphérique si elle existe déjà.
+  // Le device_id est propre à chaque installation Windows : il est retrouvé via
+  // la liste des périphériques d'OBS, jamais codé en dur (voir
+  // decision-vbcable-obs-source-via-websocket-api).
+  async ensureMicSource(deviceLabelMatch = 'CABLE Output') {
+    const { propertyItems } = await this._call('GetInputPropertiesListPropertyItems', {
+      inputKind: 'wasapi_input_capture',
+      propertyName: 'device_id',
+    });
+    const device = propertyItems.find((i) => String(i.itemName).includes(deviceLabelMatch));
+    if (!device) throw new Error(`Périphérique « ${deviceLabelMatch} » introuvable dans OBS (VB-Cable installé ? redémarre OBS après l'installation).`);
+
+    const { inputs } = await this._call('GetInputList');
+    if (inputs.some((i) => i.inputName === MIC_INPUT_NAME)) {
+      await this._call('SetInputSettings', { inputName: MIC_INPUT_NAME, inputSettings: { device_id: device.itemValue } });
+      return { created: false, name: MIC_INPUT_NAME };
+    }
+    const { scenes } = await this._call('GetSceneList');
+    const names = scenes.map((s) => s.sceneName);
+    if (!names.length) throw new Error("Aucune scène dans OBS : crée-en une d'abord.");
+    await this._call('CreateInput', {
+      sceneName: names[0],
+      inputName: MIC_INPUT_NAME,
+      inputKind: 'wasapi_input_capture',
+      inputSettings: { device_id: device.itemValue },
+      sceneItemEnabled: true,
+    });
+    for (const sceneName of names.slice(1)) {
+      await this._call('CreateSceneItem', { sceneName, sourceName: MIC_INPUT_NAME, sceneItemEnabled: true });
+    }
+    return { created: true, name: MIC_INPUT_NAME, scenes: names.length };
+  }
+
+  async hasMicSource() {
+    const { inputs } = await this._call('GetInputList');
+    return inputs.some((i) => i.inputName === MIC_INPUT_NAME);
   }
 
   async getState() {

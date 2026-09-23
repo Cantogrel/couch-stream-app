@@ -8,38 +8,29 @@ import { PcmPlayer } from './audio/pcmPlayer.js';
 import { learnObsPath } from './obsLocator.js';
 import { DeviceStore, loadIdentity } from './devices.js';
 import { advertise } from './discovery.js';
+import { DeviceAuth } from './twitch/deviceAuth.js';
+import { TwitchService } from './twitch/twitchService.js';
+import { VbCableInstaller } from './vbcable.js';
+import { Setup } from './setup.js';
 
 const SERVICE_VERSION = '0.1.0';
-
-// Réessaie tant que ça échoue (ex. pas encore de réseau au démarrage de
-// Windows) plutôt que de quitter : un service qui sort en boucle laisse
-// l'UI injoignable, sans explication.
-async function withRetry(label, fn, delayMs = 10_000) {
-  for (;;) {
-    try {
-      return await fn();
-    } catch (err) {
-      console.error(`[${label}] échec, nouvelle tentative dans ${delayMs / 1000}s:`, err.message);
-      await new Promise((r) => setTimeout(r, delayMs));
-    }
-  }
-}
 
 async function main() {
   const obs = new ObsController(config.obs);
 
   const tokenManager = new TokenManager(config.twitch);
-
   const helix = new HelixClient({ clientId: config.twitch.clientId, tokenManager });
   const chat = new TwitchChat({ channelLogin: config.twitch.channelLogin, tokenManager });
+  const deviceAuth = new DeviceAuth({ clientId: config.twitch.clientId });
+  const twitch = new TwitchService({ tokenManager, helix, chat, deviceAuth });
 
   const pcmPlayer = new PcmPlayer({ deviceLabelMatch: config.audio.outputDeviceLabel, jitterBufferMs: config.audio.jitterBufferMs });
-  // Vérifie que VB-Cable est bien présent dès le boot (échec rapide et
-  // clair), mais n'ouvre le flux audio natif qu'à la demande, pendant un
-  // envoi micro actif (voir wsServer.js) — pas en continu depuis le boot.
+  // Vérifie que VB-Cable est bien présent dès le boot, mais n'ouvre le flux
+  // audio natif qu'à la demande, pendant un envoi micro actif (voir
+  // wsServer.js) — pas en continu depuis le boot.
   await pcmPlayer.resolveDevice().catch((err) => {
     // Non fatal : le reste (OBS, chat, UI) doit fonctionner sans VB-Cable ;
-    // start() réessaie à chaque envoi micro.
+    // start() réessaie à chaque envoi micro, l'assistant propose de l'installer.
     console.error('[audio] VB-Cable indisponible au démarrage:', err.message);
   });
 
@@ -47,7 +38,10 @@ async function main() {
   // connectent, pour ne pas rater les évènements "status" initiaux.
   const identity = loadIdentity();
   const devices = new DeviceStore();
-  const server = new LocalWsServer({ port: config.localWs.port, token: config.localWs.token, obs, chat, helix, pcmPlayer, service: { version: SERVICE_VERSION }, devices, identity });
+  const vbcable = new VbCableInstaller({ pcmPlayer });
+  let server;
+  const setup = new Setup({ obs, twitchService: twitch, deviceAuth, vbcable, getPhoneCount: () => server.getStatus().phones });
+  server = new LocalWsServer({ port: config.localWs.port, token: config.localWs.token, obs, chat, helix, pcmPlayer, service: { version: SERVICE_VERSION }, devices, identity, setup, twitch });
   server.start();
   const stopAdvertising = advertise({ identity, port: config.localWs.port });
 
@@ -58,14 +52,16 @@ async function main() {
   });
   obs.startConnecting();
 
-  // Twitch après le serveur : sans réseau ou avec un token invalide, l'UI
-  // (page /desktop) reste joignable et l'explique au lieu d'être muette.
-  await withRetry('twitch', () => tokenManager.start());
-  const channel = await withRetry('twitch', () => helix.init(config.twitch.channelLogin));
-  console.log(`[twitch] Helix prêt pour ${channel.display_name} (id ${channel.id})`);
-
-  await withRetry('twitch', () => chat.connect());
-  console.log('[twitch] IRC connecté');
+  // Twitch après le serveur : sans jeton (premier lancement) ou sans réseau,
+  // l'UI reste joignable et guide l'utilisateur au lieu d'être muette.
+  const hadTokens = await twitch.loadSaved();
+  if (hadTokens) {
+    // Installation existante (jetons déjà présents) : pas d'assistant à imposer.
+    if (!setup.hasSetupFile()) setup.markCompleted(true, true);
+    twitch.connect().catch((err) => console.error('[twitch] connexion impossible:', err.message));
+  } else {
+    console.log('[twitch] pas encore connecté — à faire dans l’assistant de configuration');
+  }
 
   const shutdown = () => {
     console.log('\nArrêt du service...');

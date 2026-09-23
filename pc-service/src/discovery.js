@@ -7,7 +7,9 @@ export function advertise({ identity, port }) {
   let bonjour = null;
   try {
     bonjour = new Bonjour();
-    bonjour.publish({ name: `Couch Stream (${identity.name})`, type: 'couchstream', protocol: 'tcp', port, txt: { id: identity.id, name: identity.name } });
+    const svc = bonjour.publish({ name: `Couch Stream (${identity.name})`, type: 'couchstream', protocol: 'tcp', port, txt: { id: identity.id, name: identity.name } });
+    // Un autre service du même nom sur le réseau (deux instances) ne doit pas faire tomber celui-ci.
+    svc.on('error', (err) => console.error('[mdns] annonce refusée:', err.message));
     console.log('[mdns] annonce _couchstream._tcp sur le réseau local');
   } catch (err) {
     // Non fatal : la redécouverte par balayage du sous-réseau reste possible.

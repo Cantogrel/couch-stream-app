@@ -10,7 +10,9 @@ import { ENV_PATH } from './paths.js';
 const AUTH_TIMEOUT_MS = 5000;
 
 export class LocalWsServer {
-  constructor({ port, token, obs, chat, helix, pcmPlayer, service, devices, identity }) {
+  constructor({ port, token, obs, chat, helix, pcmPlayer, service, devices, identity, setup, twitch }) {
+    this.setup = setup;
+    this.twitch = twitch;
     this.devices = devices;
     this.identity = identity;
     this.service = service;
@@ -32,7 +34,7 @@ export class LocalWsServer {
   start() {
     // Même port pour les fichiers statiques (public/, testable depuis le
     // téléphone en HTTP) et le WebSocket (upgrade sur le même serveur HTTP).
-    this.httpServer = createStaticServer({ getStatus: () => this.getStatus(), launchObs, devices: this.devices, identity: this.identity, listDevices: () => this.listDevices(), revokeDevice: (id) => this.revokeDevice(id), service: this.service });
+    this.httpServer = createStaticServer({ getStatus: () => this.getStatus(), setup: this.setup, launchObs, devices: this.devices, identity: this.identity, listDevices: () => this.listDevices(), revokeDevice: (id) => this.revokeDevice(id), service: this.service });
     this.wss = new WebSocketServer({ server: this.httpServer });
     this.httpServer.listen(this.port);
 
@@ -59,7 +61,7 @@ export class LocalWsServer {
     return {
       version: this.service.version,
       obs: { connected: this.obs.connected, lastError: this.obs.lastError },
-      twitch: { connected: this.twitchConnected },
+      twitch: { connected: this.twitchConnected, state: this.twitch.status().state, login: this.twitch.status().login },
       vbcable: { found: Boolean(this.pcmPlayer.device), label: this.pcmPlayer.device?.label ?? null },
       phones: [...this.authedClients].filter((ws) => !ws.isLocal).length,
     };

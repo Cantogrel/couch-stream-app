@@ -15,6 +15,16 @@ function fromRegistry() {
   });
 }
 
+// OBS déjà lancé (installation portable/personnalisée, ni registre ni
+// Program Files) : son chemin réel est celui du processus.
+function fromRunningProcess() {
+  return new Promise((resolve) => {
+    execFile('powershell', ['-NoProfile', '-Command', '(Get-Process obs64 -ErrorAction SilentlyContinue | Select-Object -First 1).Path'], { windowsHide: true }, (err, out) => {
+      resolve(!err && out.trim() ? out.trim() : null);
+    });
+  });
+}
+
 // Ordre : OBS_PATH explicite, chemin appris quand OBS tournait, registre,
 // emplacements standards.
 export async function findObs() {
@@ -25,6 +35,7 @@ export async function findObs() {
     // pas encore appris
   }
   candidates.push(await fromRegistry());
+  candidates.push(await fromRunningProcess());
   for (const base of [process.env.ProgramFiles, process.env['ProgramFiles(x86)']]) {
     if (base) candidates.push(join(base, 'obs-studio', 'bin', '64bit', EXE));
   }

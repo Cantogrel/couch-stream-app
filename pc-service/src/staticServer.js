@@ -123,9 +123,9 @@ async function readBody(req, limit = 4096) {
   return raw ? JSON.parse(raw) : {};
 }
 
-export function createStaticServer({ getStatus, launchObs, devices, identity, listDevices, revokeDevice, service }) {
+export function createStaticServer({ getStatus, setup, launchObs, devices, identity, listDevices, revokeDevice, service }) {
   return createServer(async (req, res) => {
-    const urlPath = req.url === '/' ? '/index.html' : req.url === '/desktop' ? '/desktop.html' : req.url.split('?')[0];
+    const urlPath = req.url === '/' ? '/index.html' : req.url === '/desktop' ? '/desktop.html' : req.url === '/setup' ? '/setup.html' : req.url.split('?')[0];
 
     // Routes LAN pour le téléphone (CORS : l'app tourne sur http://localhost).
     // Le téléphone s'y identifie sans token : /hello ne révèle que l'identité
@@ -170,6 +170,16 @@ export function createStaticServer({ getStatus, launchObs, devices, identity, li
         return json({ ok: revokeDevice(id) });
       }
       if (urlPath === '/api/obs/launch' && req.method === 'POST') return json(await launchObs());
+      if (urlPath.startsWith('/api/setup/')) {
+        let body = {};
+        try {
+          body = req.method === 'POST' ? await readBody(req) : {};
+        } catch {
+          // corps invalide : traité comme vide
+        }
+        const out = await setup.handle(req.method, urlPath, body).catch((err) => ({ ok: false, error: err.message }));
+        if (out) return json(out);
+      }
       res.writeHead(404);
       return res.end('Not found');
     }
