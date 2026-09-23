@@ -1,11 +1,14 @@
 import { WebSocketServer } from 'ws';
 import { MicReceiver } from './audio/micReceiver.js';
 import { createStaticServer } from './staticServer.js';
+import { launchObs } from './obsLocator.js';
 
 const AUTH_TIMEOUT_MS = 5000;
 
 export class LocalWsServer {
-  constructor({ port, token, obs, chat, helix, pcmPlayer }) {
+  constructor({ port, token, obs, chat, helix, pcmPlayer, service }) {
+    this.service = service;
+    this.twitchConnected = false;
     this.port = port;
     this.token = token;
     this.obs = obs;
@@ -23,7 +26,7 @@ export class LocalWsServer {
   start() {
     // Même port pour les fichiers statiques (public/, testable depuis le
     // téléphone en HTTP) et le WebSocket (upgrade sur le même serveur HTTP).
-    this.httpServer = createStaticServer();
+    this.httpServer = createStaticServer({ getStatus: () => this.getStatus(), launchObs });
     this.wss = new WebSocketServer({ server: this.httpServer });
     this.httpServer.listen(this.port);
 
@@ -34,10 +37,22 @@ export class LocalWsServer {
     this.obs.on('event', (payload) => this._broadcast({ type: 'event', ...payload }));
     this.obs.on('status', (status) => this._broadcast({ type: 'event', name: 'obs.connection', ...status }));
     this.chat.on('message', (msg) => this._broadcast({ type: 'event', name: 'chat.message', ...msg }));
+    this.chat.on('status', (status) => { this.twitchConnected = status.connected; });
     this.chat.on('status', (status) => this._broadcast({ type: 'event', name: 'twitch.connection', ...status }));
     this.chat.on('message-deleted', (payload) => this._broadcast({ type: 'event', name: 'chat.message_deleted', ...payload }));
 
     console.log(`[http+ws] public/ + serveur local en écoute sur le port ${this.port}`);
+  }
+
+  // État affiché par la page /desktop (icône de la zone de notification).
+  getStatus() {
+    return {
+      version: this.service.version,
+      obs: { connected: this.obs.connected, lastError: this.obs.lastError },
+      twitch: { connected: this.twitchConnected },
+      vbcable: { found: Boolean(this.pcmPlayer.device), label: this.pcmPlayer.device?.label ?? null },
+      phones: this.authedClients.size,
+    };
   }
 
   _broadcast(payload) {

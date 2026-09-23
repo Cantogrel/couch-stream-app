@@ -29,6 +29,8 @@ export class ObsController extends EventEmitter {
     this.password = password;
     this.obs = null;
     this.connected = false;
+    this.lastError = null;
+    this._reconnectTimer = null;
     // Dernier relevé d'octets sortants, pour calculer le débit par différence.
     this.lastBytes = null;
   }
@@ -79,6 +81,7 @@ export class ObsController extends EventEmitter {
     await withTimeout(obs.connect(this.url, this.password), CALL_TIMEOUT_MS, 'connexion à OBS');
     this.obs = obs;
     this.connected = true;
+    this.lastError = null;
     this.emit('status', { connected: true });
   }
 
@@ -86,13 +89,30 @@ export class ObsController extends EventEmitter {
     return withTimeout(this.obs.call(requestType, requestData), CALL_TIMEOUT_MS, requestType);
   }
 
+  // Démarre la connexion sans jamais bloquer ni faire échouer l'appelant :
+  // OBS peut être lancé bien après le service (démarrage automatique avec
+  // Windows) — on réessaie toutes les 5s jusqu'à ce qu'il réponde.
+  startConnecting() {
+    this._attempt();
+  }
+
+  _attempt() {
+    this.connect().catch((err) => {
+      this.lastError = err.message;
+      console.error('[obs] connexion échouée, nouvelle tentative dans 5s:', err.message);
+      this._scheduleReconnect();
+    });
+  }
+
+  // Idempotent : ConnectionClosed et un échec de connect() peuvent tous deux
+  // le demander pour la même tentative.
   _scheduleReconnect() {
-    setTimeout(() => {
-      this.connect().catch((err) => {
-        console.error('[obs] reconnexion échouée, nouvelle tentative dans 5s:', err.message);
-        this._scheduleReconnect();
-      });
-    }, 5000).unref();
+    if (this._reconnectTimer) return;
+    this._reconnectTimer = setTimeout(() => {
+      this._reconnectTimer = null;
+      this._attempt();
+    }, 5000);
+    this._reconnectTimer.unref();
   }
 
   async getState() {

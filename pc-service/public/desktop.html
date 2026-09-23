@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Couch Stream App — État</title>
+<style>
+  :root { --bg:#0d0d10; --card:#1a1a1f; --border:#2a2a30; --fg:#eee; --dim:#9a9aa2; --ok:#4fd1a0; --bad:#f45b5b; --warn:#f5b942; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family: system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 2rem 1rem; }
+  h1 { font-size: 1.4rem; margin: 0 0 .3rem; }
+  .sub { color: var(--dim); font-size: .85rem; margin-bottom: 1.5rem; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 1rem 1.2rem; margin-bottom: 1rem; }
+  .row { display: flex; align-items: center; gap: .7rem; }
+  .dot { width: .8rem; height: .8rem; border-radius: 50%; background: var(--dim); flex-shrink: 0; }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+  .name { font-weight: 600; flex: 1; }
+  .state { color: var(--dim); font-size: .9rem; }
+  .explain { margin: .8rem 0 0; color: var(--dim); font-size: .9rem; line-height: 1.45; }
+  .explain b { color: var(--fg); }
+  button, a.btn { display: inline-block; margin-top: .8rem; background: var(--ok); color: #06231a; border: none; border-radius: 8px; padding: .65rem 1.2rem; font-size: .95rem; font-weight: 700; cursor: pointer; text-decoration: none; }
+  button.secondary, a.btn.secondary { background: #2a2a32; color: var(--fg); border: 1px solid var(--border); font-weight: 500; }
+  button:disabled { opacity: .5; cursor: default; }
+  .actions { display: flex; gap: .6rem; flex-wrap: wrap; }
+  .msg { margin-top: .6rem; font-size: .85rem; }
+  .msg.err { color: var(--bad); }
+  #down { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Couch Stream App</h1>
+  <div class="sub">Service PC <span id="version"></span></div>
+
+  <div id="down" class="card">
+    <div class="row"><span class="dot warn"></span><span class="name">Le service démarre…</span></div>
+    <p class="explain">Cette page se met à jour toute seule. Si ça dure, ouvre le dossier de données depuis l'icône de la zone de notification et consulte <b>service.log</b>.</p>
+  </div>
+
+  <div id="content">
+    <div class="card" id="obsCard">
+      <div class="row"><span class="dot" id="obsDot"></span><span class="name">OBS Studio</span><span class="state" id="obsState"></span></div>
+      <div id="obsHelp" style="display:none">
+        <p class="explain" id="obsExplain"></p>
+        <button id="obsLaunch">Ouvrir OBS</button>
+        <div class="msg err" id="obsMsg"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row"><span class="dot" id="twDot"></span><span class="name">Chat Twitch</span><span class="state" id="twState"></span></div>
+    </div>
+
+    <div class="card">
+      <div class="row"><span class="dot" id="vbDot"></span><span class="name">Audio (VB-Cable)</span><span class="state" id="vbState"></span></div>
+      <p class="explain" id="vbHelp" style="display:none">VB-Cable est introuvable : le micro du téléphone ne pourra pas être envoyé à OBS. Il n'est pas encore installé, ou le nom du périphérique ne correspond pas.</p>
+    </div>
+
+    <div class="card">
+      <div class="row"><span class="dot" id="phDot"></span><span class="name">Téléphone</span><span class="state" id="phState"></span></div>
+      <p class="explain" id="phHelp" style="display:none">Aucun téléphone connecté. Ouvre l'app sur le téléphone, ou jumelle-le avec le QR de pairing.</p>
+    </div>
+
+    <div class="actions">
+      <a class="btn" href="/pair">Afficher le QR de pairing</a>
+      <a class="btn secondary" href="/">Ouvrir le tableau de bord</a>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const set = (id, cls, text) => { $(id + 'Dot').className = 'dot ' + cls; $(id + 'State').textContent = text; };
+
+function render(s) {
+  $('down').style.display = 'none';
+  $('content').style.display = '';
+  $('version').textContent = 'v' + s.version;
+
+  const obsOk = s.obs.connected;
+  set('obs', obsOk ? 'ok' : 'bad', obsOk ? 'connecté' : 'non connecté');
+  $('obsHelp').style.display = obsOk ? 'none' : '';
+  if (!obsOk) {
+    const refused = /ECONNREFUSED|sans réponse|closed|fermé/i.test(s.obs.lastError || '');
+    $('obsExplain').innerHTML = refused || !s.obs.lastError
+      ? "<b>OBS n'est pas lancé</b> (ou son serveur WebSocket est désactivé). Le tableau de bord, les scènes et le micro ne marcheront qu'une fois OBS ouvert — le service s'y connectera tout seul."
+      : `Connexion à OBS impossible : <b>${s.obs.lastError.replace(/</g, '&lt;')}</b>. Vérifie le mot de passe et le port d'obs-websocket (Outils → Paramètres du serveur WebSocket).`;
+  }
+
+  set('tw', s.twitch.connected ? 'ok' : 'warn', s.twitch.connected ? 'connecté' : 'connexion…');
+  set('vb', s.vbcable.found ? 'ok' : 'bad', s.vbcable.found ? 'détecté' : 'introuvable');
+  $('vbHelp').style.display = s.vbcable.found ? 'none' : '';
+  set('ph', s.phones ? 'ok' : 'warn', s.phones ? `${s.phones} connecté${s.phones > 1 ? 's' : ''}` : 'aucun');
+  $('phHelp').style.display = s.phones ? 'none' : '';
+}
+
+async function poll() {
+  try {
+    const r = await fetch('/api/status', { cache: 'no-store' });
+    if (!r.ok) throw new Error(r.status);
+    render(await r.json());
+  } catch {
+    $('down').style.display = '';
+    $('content').style.display = 'none';
+  }
+}
+
+$('obsLaunch').onclick = async () => {
+  const btn = $('obsLaunch'); btn.disabled = true; $('obsMsg').textContent = '';
+  try {
+    const r = await (await fetch('/api/obs/launch', { method: 'POST' })).json();
+    if (!r.ok) $('obsMsg').textContent = r.error;
+    else btn.textContent = 'OBS se lance…';
+  } catch (e) { $('obsMsg').textContent = 'Le service ne répond pas.'; }
+  setTimeout(() => { btn.disabled = false; btn.textContent = 'Ouvrir OBS'; }, 8000);
+};
+
+poll();
+setInterval(poll, 2000);
+</script>
+</body>
+</html>

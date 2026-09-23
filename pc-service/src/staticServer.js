@@ -73,9 +73,29 @@ async function buildPairingPage() {
 // ici : mêmes garanties que le reste du service, LAN only, le token protège
 // les actions (WS), pas la simple page statique. /pair expose le token en
 // clair par QR/texte — c'est le but (pairing), toujours LAN only.
-export function createStaticServer() {
+// Ces routes déclenchent des actions sur le PC (lancer OBS) ou exposent son
+// état : réservées à la machine locale (page /desktop ouverte depuis l'icône),
+// jamais au téléphone.
+const isLoopback = (req) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+
+export function createStaticServer({ getStatus, launchObs }) {
   return createServer(async (req, res) => {
-    const urlPath = req.url === '/' ? '/index.html' : req.url.split('?')[0];
+    const urlPath = req.url === '/' ? '/index.html' : req.url === '/desktop' ? '/desktop.html' : req.url.split('?')[0];
+
+    if (urlPath.startsWith('/api/')) {
+      if (!isLoopback(req)) {
+        res.writeHead(403);
+        return res.end('Forbidden');
+      }
+      const json = (obj) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(obj));
+      };
+      if (urlPath === '/api/status' && req.method === 'GET') return json(getStatus());
+      if (urlPath === '/api/obs/launch' && req.method === 'POST') return json(await launchObs());
+      res.writeHead(404);
+      return res.end('Not found');
+    }
 
     if (urlPath === '/pair') {
       const html = await buildPairingPage();

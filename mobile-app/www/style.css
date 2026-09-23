@@ -327,3 +327,32 @@ main {
   background: #000;
   object-fit: cover;
 }
+
+/* Affichage PC (navigateur large) : la même UI, mais en colonnes, onglets en
+   haut, contenu centré — le layout téléphone reste inchangé en dessous. */
+@media (min-width: 900px) {
+  body { align-items: stretch; }
+  #topbar { order: 0; padding: .8rem 2rem; }
+  #tabbar { order: 1; position: static; justify-content: center; gap: .5rem; padding: .3rem 2rem; border-top: none; border-bottom: 1px solid var(--card-border); }
+  .tab-btn { flex: 0 0 auto; padding: .6rem 1.4rem; font-size: .9rem; }
+  main { order: 2; width: 100%; max-width: 1280px; margin: 0 auto; padding: 1.5rem 2rem; }
+  .toast { bottom: 1.5rem; left: 50%; right: auto; transform: translateX(-50%); min-width: 20rem; }
+
+  #tab-dashboard.active {
+    display: grid;
+    grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+    gap: 1rem 1.5rem;
+    align-items: start;
+  }
+  #tab-dashboard .card { margin-bottom: 0; }
+  #tab-dashboard .card:nth-child(1) { grid-column: 1; grid-row: 1 / span 3; }
+  #tab-dashboard .card:nth-child(n+2) { grid-column: 2; }
+  #tab-dashboard .scene-grid { grid-template-columns: repeat(2, 1fr); }
+
+  #tab-chat.active { max-width: 860px; margin: 0 auto; }
+  .chat-log { height: calc(100vh - 14rem); }
+
+  #tab-mic.active, #tab-settings.active { columns: 2; column-gap: 1.5rem; }
+  #tab-mic .card, #tab-settings .card { break-inside: avoid; }
+  #tab-settings .card, #tab-mic .card { margin-bottom: 1.5rem; }
+}
