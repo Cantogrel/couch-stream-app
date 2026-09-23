@@ -194,10 +194,12 @@ LOCAL_WS_TOKEN=${token}
       // jumelage par code) ou token propre à un appareil jumelé.
       const device = msg.type === 'auth' && msg.token !== this.token ? this.devices.verify(msg.token) : null;
       if (msg.type === 'auth' && (msg.token === this.token || device)) {
-        // Téléphone trop ancien pour ce PC : message clair plutôt qu'un comportement bancal.
+        // Différence de version : jamais bloquante. Seul un protocole réellement
+        // plus ancien que le minimum supporté est signalé (bandeau côté app), et
+        // la connexion est tout de même acceptée — une app un peu ancienne
+        // fonctionne presque toujours.
         if (msg.protocol !== undefined && msg.protocol < MIN_APP_PROTOCOL) {
           ws.send(JSON.stringify({ type: 'incompatible', pcVersion: this.service.version, minProtocol: MIN_APP_PROTOCOL }));
-          return ws.close(4004, 'app trop ancienne');
         }
         ws.appVersion = typeof msg.appVersion === 'string' ? msg.appVersion.slice(0, 20) : null;
         conn.authed = true;

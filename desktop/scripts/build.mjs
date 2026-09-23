@@ -12,7 +12,9 @@ const keyPath = join(keyDir, 'updater.key');
 const env = { ...process.env };
 const args = ['tauri', 'build'];
 
-if (existsSync(keyPath)) {
+if (env.TAURI_SIGNING_PRIVATE_KEY) {
+  // Fourni par l'environnement (CI GitHub Actions) : rien à lire sur disque.
+} else if (existsSync(keyPath)) {
   env.TAURI_SIGNING_PRIVATE_KEY = readFileSync(keyPath, 'utf8');
   env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD = readFileSync(join(keyDir, 'updater.key.password'), 'utf8').trim();
 } else {

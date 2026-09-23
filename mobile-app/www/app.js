@@ -53,6 +53,7 @@ const app = {
   failStreak: 0,
   appVersion: APP_VERSION_FALLBACK,
   pcVersion: null,
+  compatWarned: false,
   discovering: false,
   lastDiscoveryAt: 0,
   nextId: 1,
@@ -139,11 +140,6 @@ function connect() {
     log(`[connexion] fermée (code=${e.code} ${e.reason || ''})`);
     // 4003 : token refusé (jumelage révoqué sur le PC, ou PC réinitialisé).
     // Réessayer en boucle n'y changerait rien.
-    if (e.code === 4004) {
-      // Le PC refuse cette version de l'app (trop ancienne) : inutile de boucler.
-      app.manualDisconnect = true;
-      return showCompat("L'app est trop ancienne pour ce PC. Mets-la à jour : sur le PC, « Téléphone & infos » → « Installer l'app ».");
-    }
     if (e.code === 4003 && !app.manualDisconnect) {
       app.manualDisconnect = true;
       app.settings.token = '';
@@ -195,7 +191,7 @@ function handleMessage(msg) {
       renderAbout();
       // PC plus récent que l'app (protocole supérieur) : certaines fonctions peuvent manquer.
       if (msg.protocol > APP_PROTOCOL) showCompat("Ce PC est plus récent que l'app : mets l'app à jour (sur le PC, « Téléphone & infos » → « Installer l'app »).");
-      else showCompat(null);
+      else if (!app.compatWarned) showCompat(null);
       learnPc();
       setConnected(true);
       log('[connexion] authentifié');
@@ -223,7 +219,9 @@ function handleMessage(msg) {
       handleWebrtcIce(msg);
       break;
     case 'incompatible':
-      showCompat("L'app est trop ancienne pour ce PC. Mets-la à jour : sur le PC, « Téléphone & infos » → « Installer l'app ».");
+      // Simple avertissement : la connexion reste active.
+      app.compatWarned = true;
+      showCompat("Cette version de l'app est ancienne : certaines fonctions peuvent manquer. Mets-la à jour (sur le PC, « Téléphone & infos » → « Installer l'app »).");
       break;
     case 'error':
       toast(msg.error);

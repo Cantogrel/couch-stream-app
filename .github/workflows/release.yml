@@ -1,0 +1,75 @@
+name: Release
+
+# Publie une version : pousser un tag `vX.Y.Z` construit l'APK signé, l'installeur
+# Windows (avec sa signature de mise à jour) et le manifeste latest.json, puis les
+# attache à une GitHub Release. Les clés de signature vivent dans les secrets du
+# dépôt (voir docs/RELEASE.md) : aucune machine locale n'est nécessaire.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Clé de signature de l'APK
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/couchstream-release.keystore"
+          {
+            echo "storeFile=$(cygpath -m "$RUNNER_TEMP/couchstream-release.keystore")"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=couchstream"
+            echo "keyPassword=$KEYSTORE_PASSWORD"
+          } > mobile-app/android/keystore.properties
+
+      - name: APK Android signé
+        working-directory: mobile-app
+        run: |
+          npm ci
+          npx cap sync android
+          cd android
+          ./gradlew assembleRelease --console=plain
+
+      - name: Installeur Windows signé
+        working-directory: desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: Manifeste de mise à jour
+        run: node desktop/scripts/make-latest-json.mjs "${{ github.repository }}" "${{ github.ref_name }}" "Couch Stream App ${{ github.ref_name }}"
+
+      - name: Publier la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NSIS="desktop/src-tauri/target/release/bundle/nsis"
+          cp mobile-app/android/app/build/outputs/apk/release/app-release.apk CouchStream.apk
+          gh release create "${{ github.ref_name }}" \
+            --title "Couch Stream App ${{ github.ref_name }}" \
+            --generate-notes \
+            "$NSIS"/*-setup.exe "$NSIS/latest.json" CouchStream.apk
