@@ -78,10 +78,11 @@ export class DeviceStore {
     return this.devices.find((d) => d.tokenHash === hash) || null;
   }
 
-  touch(id) {
+  touch(id, appVersion) {
     const d = this.devices.find((x) => x.id === id);
     if (d) {
       d.lastSeenAt = Date.now();
+      if (appVersion) d.appVersion = appVersion;
       this._save();
     }
   }
@@ -97,8 +98,8 @@ export class DeviceStore {
     return this.devices.map((d) => this._public(d));
   }
 
-  _public({ id, name, createdAt, lastSeenAt }) {
-    return { id, name, createdAt, lastSeenAt };
+  _public({ id, name, createdAt, lastSeenAt, appVersion }) {
+    return { id, name, createdAt, lastSeenAt, appVersion: appVersion || null };
   }
 
   _save() {

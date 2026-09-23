@@ -304,7 +304,7 @@ async function loadDevices() {
     const list = await (await fetch('/api/devices', { cache: 'no-store' })).json();
     $('devBox').innerHTML = list.length
       ? '<div class="card-title" style="margin-top:.8rem">Téléphones jumelés</div>' + list.map((d) =>
-        `<div class="dev"><div class="info"><b>${esc(d.name)}</b><small>${d.online ? '● connecté' : 'vu ' + ago(d.lastSeenAt)}</small></div><button data-id="${esc(d.id)}">Oublier</button></div>`).join('')
+        `<div class="dev"><div class="info"><b>${esc(d.name)}</b><small>${d.online ? '● connecté' : 'vu ' + ago(d.lastSeenAt)}${d.appVersion ? ' · app v' + esc(d.appVersion) : ''}</small></div><button data-id="${esc(d.id)}">Oublier</button></div>`).join('')
       : '';
     $('devBox').querySelectorAll('button').forEach((b) => (b.onclick = async () => {
       if (!confirm(b.dataset.id === 'legacy' ? 'Oublier les téléphones jumelés avec l’ancien token partagé ? Ils devront être jumelés à nouveau par QR.' : 'Oublier ce téléphone ? Il devra être jumelé à nouveau.')) return;
@@ -338,6 +338,19 @@ async function openDialog() {
   let n = 0;
   dlgTimer = setInterval(() => { loadDevices(); if (++n % 40 === 0) loadPairing(); }, 15000 / 5);
 }
+$('copyReport').onclick = async () => {
+  try {
+    const { text } = await (await fetch('/api/diagnostics', { cache: 'no-store' })).json();
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Presse-papiers refusé : repli par sélection d'un champ temporaire.
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+    }
+    $('reportMsg').textContent = 'Rapport copié : colle-le dans un message (aucun mot de passe ni jeton n\'y figure).';
+  } catch { $('reportMsg').textContent = 'Le service ne répond pas.'; }
+};
 $('settingsBtn').onclick = openDialog;
 $('dlgClose').onclick = () => $('dlg').close();
 $('dlg').addEventListener('close', () => clearInterval(dlgTimer));

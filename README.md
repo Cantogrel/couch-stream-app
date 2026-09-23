@@ -75,3 +75,10 @@ Virtual Cable, Node.js, Capacitor.
 Voir aussi le graphe Graphify (`E:\Super IA\Graphify\Couch-Stream-App\graphify-out\`)
 et le vault mémoire (`projects/couch-stream-app/` dans AI-Memory) pour l'état
 détaillé et les décisions.
+
+## Installation et publication
+
+- **Utilisateur** : [docs/INSTALLATION.md](docs/INSTALLATION.md) — « Installation en 5 minutes »
+  (installeur Windows, assistant de configuration, application Android, dépannage).
+- **Mainteneur** : [docs/RELEASE.md](docs/RELEASE.md) — signature (APK + mises à jour), procédure de release.
+- **Plan et décisions** : [docs/PHASE6-PLAN.md](docs/PHASE6-PLAN.md).

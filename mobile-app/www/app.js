@@ -6,6 +6,9 @@
 // itérer vite dans Chrome mobile avant l'empaquetage Capacitor (Phase 4).
 
 const SETTINGS_KEY = 'couchStreamApp.settings';
+// Version du protocole PC <-> app (voir pc-service/src/version.js).
+const APP_PROTOCOL = 1;
+const APP_VERSION_FALLBACK = '1.0';
 const TIMEOUT_DURATION_S = 600;
 
 const defaultSettings = () => ({
@@ -48,6 +51,8 @@ const app = {
   manualDisconnect: false,
   reconnectTimer: null,
   failStreak: 0,
+  appVersion: APP_VERSION_FALLBACK,
+  pcVersion: null,
   discovering: false,
   lastDiscoveryAt: 0,
   nextId: 1,
@@ -127,13 +132,18 @@ function connect() {
   const ws = new WebSocket(url);
   app.ws = ws;
 
-  ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token: app.settings.token }));
+  ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token: app.settings.token, appVersion: app.appVersion, protocol: APP_PROTOCOL }));
 
   ws.onclose = (e) => {
     setConnected(false);
     log(`[connexion] fermée (code=${e.code} ${e.reason || ''})`);
     // 4003 : token refusé (jumelage révoqué sur le PC, ou PC réinitialisé).
     // Réessayer en boucle n'y changerait rien.
+    if (e.code === 4004) {
+      // Le PC refuse cette version de l'app (trop ancienne) : inutile de boucler.
+      app.manualDisconnect = true;
+      return showCompat("L'app est trop ancienne pour ce PC. Mets-la à jour : sur le PC, « Téléphone & infos » → « Installer l'app ».");
+    }
     if (e.code === 4003 && !app.manualDisconnect) {
       app.manualDisconnect = true;
       app.settings.token = '';
@@ -155,10 +165,37 @@ function connect() {
   ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
 }
 
+function showCompat(text) {
+  const el = $('compatBanner');
+  el.textContent = text || '';
+  el.classList.toggle('hidden', !text);
+}
+
+async function loadAppVersion() {
+  try {
+    if (isNative() && window.Capacitor.Plugins.App) {
+      const info = await window.Capacitor.Plugins.App.getInfo();
+      app.appVersion = info.version;
+    }
+  } catch {
+    // version de repli conservée
+  }
+  renderAbout();
+}
+
+function renderAbout() {
+  $('aboutInfo').textContent = `App v${app.appVersion} · PC ${app.pcVersion ? 'v' + app.pcVersion : 'non connecté'}`;
+}
+
 function handleMessage(msg) {
   switch (msg.type) {
     case 'welcome':
       app.failStreak = 0;
+      app.pcVersion = msg.pcVersion || null;
+      renderAbout();
+      // PC plus récent que l'app (protocole supérieur) : certaines fonctions peuvent manquer.
+      if (msg.protocol > APP_PROTOCOL) showCompat("Ce PC est plus récent que l'app : mets l'app à jour (sur le PC, « Téléphone & infos » → « Installer l'app »).");
+      else showCompat(null);
       learnPc();
       setConnected(true);
       log('[connexion] authentifié');
@@ -184,6 +221,9 @@ function handleMessage(msg) {
       break;
     case 'webrtc-ice':
       handleWebrtcIce(msg);
+      break;
+    case 'incompatible':
+      showCompat("L'app est trop ancienne pour ce PC. Mets-la à jour : sur le PC, « Téléphone & infos » → « Installer l'app ».");
       break;
     case 'error':
       toast(msg.error);
@@ -1269,6 +1309,7 @@ initServiceWorker();
 ensureNotifChannel();
 populateSettingsForm();
 renderPcInfo();
+loadAppVersion();
 populateMicDevices();
 startLivePreview(); // le tableau de bord est l'onglet actif par défaut
 if (app.settings.host && app.settings.port && app.settings.token) {

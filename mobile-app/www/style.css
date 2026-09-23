@@ -402,3 +402,5 @@ details.advanced summary { color: var(--fg-dim); font-size: .8rem; cursor: point
   animation: focusPulse .9s ease-out forwards;
 }
 @keyframes focusPulse { from { transform: scale(1.4); opacity: 1; } to { transform: scale(1); opacity: .2; } }
+
+.compat-banner { background: var(--warn); color: #2a1c00; padding: .6rem 1rem; font-size: .85rem; text-align: center; }

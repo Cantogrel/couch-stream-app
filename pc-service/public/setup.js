@@ -18,7 +18,10 @@ const STEPS = [
 // ---------- OBS ----------
 function renderObs(s) {
   const o = s.obs;
-  if (o.connected) return `<p class="msg ok">OBS répond. Rien d'autre à faire ici.</p>`;
+  if (o.connected) {
+    return `<p class="msg ok">OBS ${esc(o.version || '')} répond.</p>` +
+      (o.versionOk === false ? `<p class="msg err">Cette version d'OBS est trop ancienne : Couch Stream App demande OBS 28 ou plus récent (le serveur WebSocket n'y est pas intégré avant).</p>` : '');
+  }
   let h = '';
   if (!o.installed) {
     h += `<p><b>OBS Studio n'est pas installé</b> (ou introuvable). Installe-le depuis <a href="https://obsproject.com/fr/download" target="_blank" rel="noopener">obsproject.com</a> (version 28 ou plus récente, qui inclut le serveur WebSocket), lance-le une fois, puis reviens ici.</p>`;
@@ -113,7 +116,8 @@ let lastKey = '';
 function render() {
   if (!S) return;
   const firstTodo = STEPS.findIndex((st) => !st.done(S));
-  const html = STEPS.map((st, i) => {
+  const sysWarn = S.system && !S.system.ok ? `<div class="step"><p class="msg err">Windows ${esc(S.system.windows)} détecté : Couch Stream App demande Windows 10 ou 11.</p></div>` : '';
+  const html = sysWarn + STEPS.map((st, i) => {
     const done = st.done(S);
     return `<div class="step ${done ? 'done' : ''} ${i === firstTodo ? 'current' : ''}" data-key="${st.key}">
       <div class="head"><span class="num">${done ? '✓' : i + 1}</span><h2>${st.title}</h2><span class="badge">${esc(st.badge(S))}</span></div>

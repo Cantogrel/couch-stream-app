@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { release } from 'node:os';
 import { DATA_DIR } from './paths.js';
 import { setEnvVar } from './envFile.js';
 import { findObs, launchObs } from './obsLocator.js';
@@ -43,8 +44,12 @@ export class Setup {
     if (this.obs.connected) micSource = await this.obs.hasMicSource().catch(() => null);
     return {
       completed: this.isCompleted(),
+      system: { windows: release(), ok: parseInt(release().split('.')[0], 10) >= 10 },
       obs: {
         connected: this.obs.connected,
+        version: this.obs.obsVersion,
+        // obs-websocket est intégré à OBS depuis la version 28.
+        versionOk: this.obs.obsVersion ? parseInt(this.obs.obsVersion, 10) >= 28 : null,
         lastError: this.obs.lastError,
         installed: Boolean(await findObs()),
         detected: cfg.found ? { enabled: cfg.enabled, port: cfg.port, authRequired: cfg.authRequired, hasPassword: Boolean(cfg.password) } : null,

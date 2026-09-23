@@ -3,14 +3,45 @@
   "productName": "Couch Stream App",
   "version": "0.1.0",
   "identifier": "com.binagames.couchstream",
-  "build": { "frontendDist": "../ui" },
-  "app": { "windows": [], "security": { "csp": null } },
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
-    "icon": ["icons/icon.ico"],
-    "externalBin": ["binaries/node"],
-    "resources": { "../sidecar/": "sidecar/" },
-    "windows": { "nsis": { "installMode": "currentUser" } }
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/node"
+    ],
+    "resources": {
+      "../sidecar/": "sidecar/"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY1RDk0MEQ5REQ1MEU3MzgKUldRNDUxRGQyVURaOVJvTVZWQlMyVHV0WldhM2Nra3VVTytLR28rYTBzaXI0anBOTml2enpoSCsK",
+      "endpoints": [
+        "https://github.com/OWNER/REPO/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

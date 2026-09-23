@@ -13,6 +13,7 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_opener::OpenerExt;
+use tauri_plugin_updater::UpdaterExt;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const RESTART_DELAY: Duration = Duration::from_secs(5);
@@ -107,7 +108,9 @@ fn open_url(app: &AppHandle, url: &str) {
 // Windows, redémarrage après crash), ouvre à la place une page d'attente qui
 // l'explique et bascule seule vers la vraie page dès que le service répond —
 // au lieu d'une page blanche « connexion refusée ».
-fn open_service_page(app: &AppHandle, dir: &Path, port: u16, path: &str) {
+fn open_service_page(app: &AppHandle, dir: &Path, _port: u16, path: &str) {
+    // Le service peut avoir changé de port (port occupé) : on relit le .env à chaque ouverture.
+    let port = local_port(dir);
     let url = format!("http://127.0.0.1:{port}{path}");
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(400)).is_ok() {
@@ -127,10 +130,45 @@ fn open_service_page(app: &AppHandle, dir: &Path, port: u16, path: &str) {
     }
 }
 
+// Vérifie (et installe) une mise à jour signée. Au démarrage : silencieux. À la
+// demande (menu) : le résultat s'affiche dans une petite page, sinon un clic
+// sur « Rechercher une mise à jour » ne donnerait aucun retour.
+fn check_update(app: AppHandle, dir: PathBuf, manual: bool) {
+    tauri::async_runtime::spawn(async move {
+        let current = app.package_info().version.to_string();
+        let message = match app.updater() {
+            Ok(updater) => match updater.check().await {
+                Ok(Some(update)) => {
+                    let version = update.version.clone();
+                    // L'installeur ferme l'app puis la relance ; le service Node s'arrête avec elle.
+                    match update.download_and_install(|_, _| {}, || {}).await {
+                        Ok(_) => format!("La version {version} est installée. L'application redémarre."),
+                        Err(e) => format!("La version {version} est disponible mais l'installation a échoué : {e}"),
+                    }
+                }
+                Ok(None) => format!("Tu utilises la dernière version ({current})."),
+                Err(e) => format!("Vérification impossible pour le moment : {e}"),
+            },
+            Err(e) => format!("Mises à jour indisponibles : {e}"),
+        };
+        let _ = fs::write(dir.join("updater.log"), format!("{message}\n"));
+        if manual {
+            let page = dir.join("update.html");
+            let html = format!(
+                "<!doctype html><meta charset=\"utf-8\"><title>Mise à jour</title><body style=\"font-family:system-ui,sans-serif;background:#0d0d10;color:#eee;max-width:32rem;margin:4rem auto;padding:0 1rem\"><h2>Mise à jour</h2><p style=\"color:#9a9aa2;line-height:1.5\">{message}</p>"
+            );
+            if fs::write(&page, html).is_ok() {
+                open_url(&app, &page.to_string_lossy());
+            }
+        }
+    });
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None::<Vec<&'static str>>))
         .setup(|app| {
             let dir = data_dir();
@@ -148,14 +186,24 @@ fn main() {
 
             let port = local_port(&dir);
 
+            // Vérification automatique 60 s après le démarrage (jamais bloquante).
+            {
+                let handle = app.handle().clone();
+                let dir = dir.clone();
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_secs(60));
+                    check_update(handle, dir, false);
+                });
+            }
+
             // Premier lancement (pas d'assistant terminé) : ouvre l'assistant dès
             // que le service répond, au lieu de laisser une icône muette.
             {
                 let handle = app.handle().clone();
                 let dir = dir.clone();
                 thread::spawn(move || {
-                    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
                     for _ in 0..120 {
+                        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], local_port(&dir)));
                         if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(400)).is_ok() {
                             thread::sleep(Duration::from_secs(2)); // laisse le service écrire setup.json s'il migre une ancienne config
                             if !dir.join("setup.json").exists() {
@@ -169,11 +217,12 @@ fn main() {
             }
             let state = MenuItem::with_id(app, "state", "Ouvrir la console", true, None::<&str>)?;
             let setup_item = MenuItem::with_id(app, "setup", "Assistant de configuration", true, None::<&str>)?;
+            let update_item = MenuItem::with_id(app, "update", "Rechercher une mise à jour", true, None::<&str>)?;
             let pair = MenuItem::with_id(app, "pair", "Jumeler un téléphone (QR)", true, None::<&str>)?;
             let logs = MenuItem::with_id(app, "logs", "Ouvrir le dossier de données", true, None::<&str>)?;
             let auto = CheckMenuItem::with_id(app, "auto", "Démarrer avec Windows", true, app.autolaunch().is_enabled().unwrap_or(false), None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quitter", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&state, &pair, &setup_item, &logs, &PredefinedMenuItem::separator(app)?, &auto, &PredefinedMenuItem::separator(app)?, &quit])?;
+            let menu = Menu::with_items(app, &[&state, &pair, &setup_item, &update_item, &logs, &PredefinedMenuItem::separator(app)?, &auto, &PredefinedMenuItem::separator(app)?, &quit])?;
 
             let data = dir.clone();
             let svc_quit = svc.clone();
@@ -192,6 +241,7 @@ fn main() {
                 })
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "state" => open_service_page(app, &data, port, "/desktop"),
+                    "update" => check_update(app.clone(), data.clone(), true),
                     "setup" => open_service_page(app, &data, port, "/setup"),
                     "pair" => open_service_page(app, &data, port, "/desktop#pair"),
                     "logs" => open_url(app, &data.to_string_lossy()),

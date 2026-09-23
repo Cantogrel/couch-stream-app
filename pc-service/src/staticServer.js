@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import QRCode from 'qrcode';
 import { config } from './config.js';
 import { getLanAddress } from './lanAddress.js';
+import { PROTOCOL } from './version.js';
 
 const SERVICE_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 
@@ -46,6 +47,7 @@ async function resolveFile(urlPath) {
 // dev, le dernier build debug du dépôt.
 const APK_CANDIDATES = [
   join(SERVICE_ROOT, '..', 'app.apk'),
+  join(SERVICE_ROOT, '..', 'mobile-app', 'android', 'app', 'build', 'outputs', 'apk', 'release', 'app-release.apk'),
   join(SERVICE_ROOT, '..', 'mobile-app', 'android', 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk'),
 ];
 
@@ -123,7 +125,7 @@ async function readBody(req, limit = 4096) {
   return raw ? JSON.parse(raw) : {};
 }
 
-export function createStaticServer({ getStatus, setup, launchObs, devices, identity, listDevices, revokeDevice, service }) {
+export function createStaticServer({ getStatus, getDiagnostics, setup, launchObs, devices, identity, listDevices, revokeDevice, service }) {
   return createServer(async (req, res) => {
     const urlPath = req.url === '/' ? '/index.html' : req.url === '/desktop' ? '/desktop.html' : req.url === '/setup' ? '/setup.html' : req.url.split('?')[0];
 
@@ -136,7 +138,7 @@ export function createStaticServer({ getStatus, setup, launchObs, devices, ident
     }
     if (urlPath === '/hello' && req.method === 'GET') {
       res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ app: 'couch-stream', id: identity.id, name: identity.name, version: service.version, port: config.localWs.port }));
+      return res.end(JSON.stringify({ app: 'couch-stream', id: identity.id, name: identity.name, version: service.version, protocol: PROTOCOL, port: config.localWs.port }));
     }
     if (urlPath === '/api/pair' && req.method === 'POST') {
       let result = null;
@@ -160,6 +162,7 @@ export function createStaticServer({ getStatus, setup, launchObs, devices, ident
         res.end(JSON.stringify(obj));
       };
       if (urlPath === '/api/status' && req.method === 'GET') return json(getStatus());
+      if (urlPath === '/api/diagnostics' && req.method === 'GET') return json({ text: await getDiagnostics() });
       // La console PC (/desktop) s'authentifie seule : token servi uniquement
       // à la boucle locale, jamais au LAN.
       if (urlPath === '/api/session' && req.method === 'GET') return json({ token: config.localWs.token });

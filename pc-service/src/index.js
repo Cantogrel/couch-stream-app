@@ -12,8 +12,7 @@ import { DeviceAuth } from './twitch/deviceAuth.js';
 import { TwitchService } from './twitch/twitchService.js';
 import { VbCableInstaller } from './vbcable.js';
 import { Setup } from './setup.js';
-
-const SERVICE_VERSION = '0.1.0';
+import { VERSION } from './version.js';
 
 async function main() {
   const obs = new ObsController(config.obs);
@@ -41,8 +40,8 @@ async function main() {
   const vbcable = new VbCableInstaller({ pcmPlayer });
   let server;
   const setup = new Setup({ obs, twitchService: twitch, deviceAuth, vbcable, getPhoneCount: () => server.getStatus().phones });
-  server = new LocalWsServer({ port: config.localWs.port, token: config.localWs.token, obs, chat, helix, pcmPlayer, service: { version: SERVICE_VERSION }, devices, identity, setup, twitch });
-  server.start();
+  server = new LocalWsServer({ port: config.localWs.port, token: config.localWs.token, obs, chat, helix, pcmPlayer, service: { version: VERSION }, devices, identity, setup, twitch });
+  await server.start();
   const stopAdvertising = advertise({ identity, port: config.localWs.port });
 
   // OBS peut être fermé au démarrage : on ne bloque pas le reste dessus.

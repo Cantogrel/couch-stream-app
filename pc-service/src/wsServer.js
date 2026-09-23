@@ -2,9 +2,12 @@ import { WebSocketServer } from 'ws';
 import { MicReceiver } from './audio/micReceiver.js';
 import { createStaticServer } from './staticServer.js';
 import { launchObs } from './obsLocator.js';
+import { MIN_APP_PROTOCOL, PROTOCOL } from './version.js';
+import { buildReport } from './diagnostics.js';
 import { randomBytes } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { config } from './config.js';
+import { setEnvVar } from './envFile.js';
 import { ENV_PATH } from './paths.js';
 
 const AUTH_TIMEOUT_MS = 5000;
@@ -31,12 +34,13 @@ export class LocalWsServer {
     this.activeMicCount = 0;
   }
 
-  start() {
+  async start() {
     // Même port pour les fichiers statiques (public/, testable depuis le
     // téléphone en HTTP) et le WebSocket (upgrade sur le même serveur HTTP).
-    this.httpServer = createStaticServer({ getStatus: () => this.getStatus(), setup: this.setup, launchObs, devices: this.devices, identity: this.identity, listDevices: () => this.listDevices(), revokeDevice: (id) => this.revokeDevice(id), service: this.service });
+    this.httpServer = createStaticServer({ getStatus: () => this.getStatus(), setup: this.setup, getDiagnostics: () => buildReport(this), launchObs, devices: this.devices, identity: this.identity, listDevices: () => this.listDevices(), revokeDevice: (id) => this.revokeDevice(id), service: this.service });
     this.wss = new WebSocketServer({ server: this.httpServer });
-    this.httpServer.listen(this.port);
+    this.wss.on('error', () => {}); // les erreurs d'écoute sont traitées ci-dessous
+    await this._listenWithFallback();
 
     this.wss.on('connection', (ws, req) => {
       // Console PC (boucle locale) ≠ téléphone : exclue du compteur de téléphones.
@@ -60,11 +64,39 @@ export class LocalWsServer {
   getStatus() {
     return {
       version: this.service.version,
-      obs: { connected: this.obs.connected, lastError: this.obs.lastError },
+      obs: { connected: this.obs.connected, lastError: this.obs.lastError, version: this.obs.obsVersion },
       twitch: { connected: this.twitchConnected, state: this.twitch.status().state, login: this.twitch.status().login },
       vbcable: { found: Boolean(this.pcmPlayer.device), label: this.pcmPlayer.device?.label ?? null },
       phones: [...this.authedClients].filter((ws) => !ws.isLocal).length,
     };
+  }
+
+  // Port déjà pris (autre programme, deuxième instance) : on prend le suivant
+  // libre et on le mémorise, plutôt que de planter en boucle. Le téléphone
+  // retrouve le PC par mDNS, qui annonce le port réel.
+  async _listenWithFallback() {
+    const first = this.port;
+    for (let p = first; p < first + 10; p++) {
+      try {
+        await new Promise((resolve, reject) => {
+          this.httpServer.once('error', reject);
+          this.httpServer.listen(p, () => {
+            this.httpServer.off('error', reject);
+            resolve();
+          });
+        });
+        this.port = p;
+        break;
+      } catch (err) {
+        if (err.code !== 'EADDRINUSE') throw err;
+      }
+    }
+    if (this.port === first && !this.httpServer.listening) throw new Error(`aucun port libre entre ${first} et ${first + 9}`);
+    if (this.port !== first) {
+      console.error(`[http+ws] port ${first} occupé — utilisation du port ${this.port}`);
+      setEnvVar('LOCAL_WS_PORT', String(this.port));
+      config.localWs.port = this.port;
+    }
   }
 
   // Téléphones jumelés (avec état en ligne) + l'ancien jumelage par token
@@ -162,14 +194,20 @@ LOCAL_WS_TOKEN=${token}
       // jumelage par code) ou token propre à un appareil jumelé.
       const device = msg.type === 'auth' && msg.token !== this.token ? this.devices.verify(msg.token) : null;
       if (msg.type === 'auth' && (msg.token === this.token || device)) {
+        // Téléphone trop ancien pour ce PC : message clair plutôt qu'un comportement bancal.
+        if (msg.protocol !== undefined && msg.protocol < MIN_APP_PROTOCOL) {
+          ws.send(JSON.stringify({ type: 'incompatible', pcVersion: this.service.version, minProtocol: MIN_APP_PROTOCOL }));
+          return ws.close(4004, 'app trop ancienne');
+        }
+        ws.appVersion = typeof msg.appVersion === 'string' ? msg.appVersion.slice(0, 20) : null;
         conn.authed = true;
         if (device) {
           ws.deviceId = device.id;
-          this.devices.touch(device.id);
+          this.devices.touch(device.id, ws.appVersion);
         }
         clearTimeout(conn.authTimer);
         this.authedClients.add(ws);
-        ws.send(JSON.stringify({ type: 'welcome' }));
+        ws.send(JSON.stringify({ type: 'welcome', pcVersion: this.service.version, protocol: PROTOCOL }));
         try {
           const state = await this.obs.getState();
           ws.send(JSON.stringify({ type: 'state', ...state }));

@@ -30,6 +30,8 @@ export class ObsController extends EventEmitter {
     this.obs = null;
     this.connected = false;
     this.lastError = null;
+    this.obsVersion = null;
+    this._failStreak = 0;
     this._reconnectTimer = null;
     // Dernier relevé d'octets sortants, pour calculer le débit par différence.
     this.lastBytes = null;
@@ -82,6 +84,9 @@ export class ObsController extends EventEmitter {
     this.obs = obs;
     this.connected = true;
     this.lastError = null;
+    this._failStreak = 0;
+    // Version d'OBS (prérequis affichés par l'assistant et le rapport de diagnostic).
+    this.obsVersion = await withTimeout(obs.call('GetVersion'), CALL_TIMEOUT_MS, 'GetVersion').then((v) => v.obsVersion).catch(() => null);
     this.emit('status', { connected: true });
   }
 
@@ -99,7 +104,9 @@ export class ObsController extends EventEmitter {
   _attempt() {
     this.connect().catch((err) => {
       this.lastError = err.message;
-      console.error('[obs] connexion échouée, nouvelle tentative dans 5s:', err.message);
+      // OBS fermé = échec toutes les 5 s : on ne journalise que la première fois
+      // puis une fois par minute, sinon le journal se noie (et le rapport avec).
+      if (this._failStreak++ % 12 === 0) console.error('[obs] connexion échouée (nouvelle tentative toutes les 5s):', err.message);
       this._scheduleReconnect();
     });
   }

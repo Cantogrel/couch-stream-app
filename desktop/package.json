@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "scripts": {
     "stage": "node scripts/stage-sidecar.mjs",
-    "build": "node scripts/stage-sidecar.mjs && tauri build",
+    "build": "node scripts/build.mjs",
     "tauri": "tauri"
   },
   "devDependencies": { "@tauri-apps/cli": "^2" }
