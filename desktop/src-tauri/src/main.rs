@@ -166,10 +166,15 @@ fn check_update(app: AppHandle, dir: PathBuf, manual: bool) {
 
 fn main() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // Raccourci du bureau / menu Démarrer alors que l'app tourne déjà (icône
+            // dans la zone de notification) : ouvre la console au lieu de ne rien faire.
+            let dir = data_dir();
+            open_service_page(app, &dir, local_port(&dir), "/desktop");
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None::<Vec<&'static str>>))
+        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--autostart"])))
         .setup(|app| {
             let dir = data_dir();
             fs::create_dir_all(&dir)?;
@@ -179,7 +184,12 @@ fn main() {
             if !marker.exists() {
                 let _ = app.autolaunch().enable();
                 let _ = fs::write(&marker, "");
+            } else if app.autolaunch().is_enabled().unwrap_or(false) {
+                // Réécrit l'entrée de démarrage pour qu'elle porte --autostart (installations antérieures).
+                let _ = app.autolaunch().enable();
             }
+            // Lancé à la main (raccourci du bureau) et non par Windows au démarrage : ouvrira la console.
+            let manual_launch = !std::env::args().any(|a| a == "--autostart");
 
             let svc = Arc::new(Service { child: Mutex::new(None), quitting: AtomicBool::new(false) });
             supervise(app.handle().clone(), svc.clone(), dir.clone());
@@ -217,6 +227,8 @@ fn main() {
                                 .unwrap_or(false);
                             if !done {
                                 open_service_page(&handle, &dir, port, "/setup");
+                            } else if manual_launch {
+                                open_service_page(&handle, &dir, port, "/desktop");
                             }
                             return;
                         }
