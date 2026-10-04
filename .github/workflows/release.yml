@@ -30,12 +30,23 @@ jobs:
           distribution: temurin
           java-version: 21
 
+      # Caches : lus par les builds de tag, écrits par les builds de main
+      # (workflow warm-cache.yml) — un tag ne peut pas réutiliser le cache d'un
+      # autre tag, seulement celui de la branche par défaut.
+      - uses: gradle/actions/setup-gradle@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Clé de signature de l'APK
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
-          echo "$KEYSTORE_B64" | tr -d '\r\n ' | base64 -d > "$RUNNER_TEMP/couchstream-release.keystore"
+          echo "$KEYSTORE_B64" | tr -d '
+ ' | base64 -d > "$RUNNER_TEMP/couchstream-release.keystore"
           {
             echo "storeFile=$(cygpath -m "$RUNNER_TEMP/couchstream-release.keystore")"
             echo "storePassword=$KEYSTORE_PASSWORD"
@@ -43,22 +54,26 @@ jobs:
             echo "keyPassword=$KEYSTORE_PASSWORD"
           } > mobile-app/android/keystore.properties
 
-      - name: APK Android signé
-        working-directory: mobile-app
+      # L'APK (Gradle) et l'application Windows (compilation Rust) sont
+      # indépendants jusqu'à l'empaquetage : on les construit en même temps.
+      - name: Compilation (APK Android et application Windows en parallèle)
         run: |
+          (cd mobile-app && npm ci && npx cap sync android && cd android && ./gradlew assembleRelease --console=plain) > "$RUNNER_TEMP/apk.log" 2>&1 &
+          APK_PID=$!
+          cd desktop
           npm ci
-          npx cap sync android
-          cd android
-          ./gradlew assembleRelease --console=plain
+          node scripts/stage-sidecar.mjs
+          npx tauri build --no-bundle
+          cd ..
+          if ! wait $APK_PID; then tail -60 "$RUNNER_TEMP/apk.log"; exit 1; fi
+          tail -5 "$RUNNER_TEMP/apk.log"
 
       - name: Installeur Windows signé
         working-directory: desktop
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          npm ci
-          npm run build
+        run: npm run build
 
       - name: Manifeste de mise à jour
         run: node desktop/scripts/make-latest-json.mjs "${{ github.repository }}" "${{ github.ref_name }}" "Couch Stream App ${{ github.ref_name }}"

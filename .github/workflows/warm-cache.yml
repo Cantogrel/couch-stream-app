@@ -1,0 +1,43 @@
+name: Warm cache
+
+# Remplit les caches Gradle et Cargo depuis main : les builds de tag (release.yml)
+# les relisent, ce qui divise leur durée. Sans signature ni publication.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'desktop/src-tauri/**'
+      - 'mobile-app/android/**'
+      - 'mobile-app/package-lock.json'
+      - 'desktop/package-lock.json'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+jobs:
+  warm:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - name: Compilation (APK non signé et application Windows)
+        run: |
+          (cd mobile-app && npm ci && npx cap sync android && cd android && ./gradlew assembleRelease --console=plain) > "$RUNNER_TEMP/apk.log" 2>&1 &
+          APK_PID=$!
+          cd desktop
+          npm ci
+          node scripts/stage-sidecar.mjs
+          npx tauri build --no-bundle
+          wait $APK_PID
