@@ -33,6 +33,9 @@ export class ObsController extends EventEmitter {
     this.obsVersion = null;
     this._failStreak = 0;
     this._reconnectTimer = null;
+    // Suivi local de l'état du live (évènements OBS) : permet au service de
+    // refuser une action risquée (mise à jour) pendant un direct sans requête.
+    this.streaming = false;
     // Dernier relevé d'octets sortants, pour calculer le débit par différence.
     this.lastBytes = null;
   }
@@ -42,14 +45,20 @@ export class ObsController extends EventEmitter {
   // connect()).
   _bindClient(obs) {
     obs.on('ConnectionClosed', () => {
+      // Chaque tentative ratée (OBS fermé) referme aussi sa connexion : seule la
+      // vraie perte d'une connexion établie est un changement d'état — sinon les
+      // clients recevraient « OBS déconnecté » toutes les 5 s.
+      const wasConnected = this.connected;
       this.connected = false;
-      this.emit('status', { connected: false });
+      this.streaming = false;
+      if (wasConnected) this.emit('status', { connected: false });
       this._scheduleReconnect();
     });
     obs.on('CurrentProgramSceneChanged', ({ sceneName }) => {
       this.emit('event', { name: 'obs.scene_changed', sceneName });
     });
     obs.on('StreamStateChanged', ({ outputActive }) => {
+      this.streaming = outputActive;
       this.emit('event', { name: 'obs.stream_state', active: outputActive });
     });
     obs.on('InputMuteStateChanged', ({ inputName, inputMuted }) => {
@@ -91,6 +100,7 @@ export class ObsController extends EventEmitter {
   }
 
   _call(requestType, requestData) {
+    if (!this.connected || !this.obs) return Promise.reject(new Error("OBS n'est pas connecté"));
     return withTimeout(this.obs.call(requestType, requestData), CALL_TIMEOUT_MS, requestType);
   }
 
@@ -190,13 +200,21 @@ export class ObsController extends EventEmitter {
   }
 
   async getState() {
+    // OBS fermé : un état « vide » explicite plutôt qu'une erreur — les clients
+    // affichent « OBS non connecté » et grisent les commandes au lieu de
+    // recevoir une erreur à chaque connexion.
+    if (!this.connected) {
+      return { obsConnected: false, scenes: [], currentScene: null, streaming: false, streamDurationMs: null, droppedFrames: null, totalFrames: null, congestion: null, micMuted: null, micVolume: null };
+    }
     const [{ scenes, currentProgramSceneName }, streamStatus, { inputMuted }, { inputVolumeMul }] = await Promise.all([
       this._call('GetSceneList'),
       this._call('GetStreamStatus'),
       this._call('GetInputMute', { inputName: MIC_INPUT_NAME }).catch(() => ({ inputMuted: null })),
       this._call('GetInputVolume', { inputName: MIC_INPUT_NAME }).catch(() => ({ inputVolumeMul: null })),
     ]);
+    this.streaming = streamStatus.outputActive;
     return {
+      obsConnected: true,
       scenes: scenes.map((s) => s.sceneName).reverse(),
       currentScene: currentProgramSceneName,
       streaming: streamStatus.outputActive,

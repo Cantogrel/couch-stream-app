@@ -11,10 +11,15 @@
 <header id="topbar">
   <span id="statusDot" class="dot disconnected"></span>
   <span id="statusText">déconnecté</span>
+  <span id="viewersBadge" class="viewers-badge hidden" title="Spectateurs en ce moment">👁 <b id="viewersCount">0</b></span>
   <span id="liveBadge" class="live-badge hidden">● LIVE</span>
 </header>
 
 <div id="compatBanner" class="compat-banner hidden"></div>
+<div id="updateBanner" class="update-banner hidden">
+  <span id="updateText"></span>
+  <button id="updateBtn" class="btn">Mettre à jour</button>
+</div>
 
 <main>
 
@@ -40,17 +45,21 @@
         </div>
         <button id="streamToggleBtn" class="big-btn">Démarrer</button>
       </div>
-      <div class="health-row">
-        <div class="health-item"><span id="droppedFrames">–</span><small>frames perdues</small></div>
-        <div class="health-item"><span id="totalFrames">–</span><small>frames totales</small></div>
-        <div class="health-item"><span id="congestion">–</span><small>congestion</small></div>
+      <div id="obsOffline" class="obs-offline hidden">
+        <span id="obsOfflineText">Impossible de démarrer tant qu'OBS n'est pas connecté.</span>
+        <button id="obsLaunchBtn" class="btn">Ouvrir OBS sur le PC</button>
       </div>
       <div class="health-row">
         <div class="health-item"><span id="bitrate">–</span><small>kb/s</small></div>
         <div class="health-item"><span id="fps">–</span><small>fps</small></div>
-        <div class="health-item"><span id="cpu">–</span><small>CPU OBS</small></div>
+        <div class="health-item"><span id="congestion">–</span><small>congestion</small></div>
       </div>
       <div id="healthStatus" class="stat-sub"></div>
+    </div>
+
+    <div class="card last-chat" id="lastChatCard">
+      <div class="card-title">Dernier message du chat</div>
+      <div id="lastChat" class="last-chat-body empty">Aucun message pour l'instant.</div>
     </div>
 
     <div class="card">
@@ -68,6 +77,10 @@
   </section>
 
   <section id="tab-chat" class="tab">
+    <div class="chat-head">
+      <span id="chatStats" class="stat-sub">–</span>
+      <button id="chattersBtn" class="btn small" type="button">👥 Connectés</button>
+    </div>
     <div id="chatLog" class="chat-log"></div>
     <form id="chatForm" class="chat-input-row">
       <input type="text" id="chatInput" placeholder="Message…" autocomplete="off">
@@ -199,8 +212,17 @@
     </div>
 
     <div class="card">
-      <div class="card-title">À propos</div>
+      <div class="card-title">Écran</div>
+      <label class="switch-row">
+        <span>Garder l'écran allumé dans l'app</span>
+        <input type="checkbox" id="cfgKeepAwake">
+      </label>
+    </div>
+
+    <div class="card">
+      <div class="card-title">À propos et mises à jour</div>
       <div id="aboutInfo" class="stat-sub">–</div>
+      <button id="checkUpdateBtn" class="btn full">Rechercher une mise à jour</button>
     </div>
 
     <div class="card">
@@ -224,6 +246,18 @@
   <button class="tab-btn" data-tab="mic">Micro</button>
   <button class="tab-btn" data-tab="settings">Réglages</button>
 </nav>
+
+<div id="chattersPanel" class="sheet hidden">
+  <div class="sheet-card">
+    <div class="sheet-head">
+      <b>Connectés au chat <span id="chattersCount" class="stat-sub"></span></b>
+      <button id="chattersClose" class="btn small" type="button">Fermer</button>
+    </div>
+    <input type="text" id="chattersFilter" placeholder="Filtrer…" autocomplete="off">
+    <p id="chattersNote" class="hint"></p>
+    <div id="chattersList" class="chatters-list"></div>
+  </div>
+</div>
 
 <div id="toast" class="toast hidden"></div>
 

@@ -65,6 +65,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Mise à jour de l'app depuis le PC : lancer l'installeur système sur l'APK
+         téléchargé (autorisation « applis inconnues » à accorder une fois). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Découverte mDNS du PC (DiscoveryPlugin) : verrou multicast Wi-Fi. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />

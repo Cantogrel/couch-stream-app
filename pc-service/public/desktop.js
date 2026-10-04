@@ -10,6 +10,8 @@ const st = {
   clock: null,
   msgs: new Map(),
   previewOk: false, previewError: null,
+  viewers: null,           // { live, viewers, chatters }
+  update: null,            // état des mises à jour (update-status.json)
 };
 
 function toast(text) {
@@ -39,6 +41,10 @@ async function pollStatus() {
   $('dlgVersion').textContent = s ? 'v' + s.version : '–';
   $('vbDot').parentElement.title = s?.vbcable.found ? s.vbcable.label : 'VB-Cable introuvable : le micro du téléphone ne peut pas être envoyé à OBS.';
   $('twDot').parentElement.title = s?.twitch.connected ? 'Chat Twitch connecté' : 'Chat Twitch en cours de connexion…';
+  st.viewers = s?.viewers ?? st.viewers;
+  st.update = s?.update ?? null;
+  renderViewers();
+  renderUpdate();
   if (st.obs.connected && !wasConnected) refreshState();
   if (!st.obs.connected) { st.obs.streaming = false; st.clock = null; }
   render();
@@ -92,6 +98,7 @@ function onEvent(m) {
       st.clock = m.active ? { base: 0, at: Date.now() } : null;
       break;
     case 'obs.mic_mute_changed': st.obs.micMuted = m.muted; break;
+    case 'twitch.viewers': st.viewers = m; renderViewers(); return;
     case 'chat.message': addMessage(m); break;
     case 'chat.message_deleted': markDeleted(m.id, m); break;
     default: return;
@@ -222,12 +229,9 @@ async function healthTick() {
   try {
     const h = await cmd('obs.getHealth');
     const live = h.streaming;
-    $('hDropped').textContent = live ? h.droppedFrames ?? '–' : '–';
-    $('hTotal').textContent = live ? h.totalFrames ?? '–' : '–';
     $('hCong').textContent = live && h.congestion != null ? Math.round(h.congestion * 100) + '%' : '–';
     $('hKbps').textContent = live ? h.bitrateKbps ?? '–' : '–';
     $('hFps').textContent = h.fps != null ? Math.round(h.fps) : '–';
-    $('hCpu').textContent = h.cpuPct != null ? h.cpuPct + '%' : '–';
   } catch { /* transitoire */ }
 }
 setInterval(healthTick, 2000);
@@ -283,6 +287,76 @@ $('chatForm').onsubmit = (e) => {
   if (!text) return;
   $('chatInput').value = '';
   cmd('chat.send', { message: text }).catch((err) => toast(err.message));
+};
+
+// ---------- spectateurs & connectés ----------
+
+function renderViewers() {
+  const v = st.viewers;
+  const show = Boolean(v?.live && v.viewers != null);
+  $('vwPill').classList.toggle('hidden', !show);
+  if (show) $('vwText').textContent = v.viewers;
+}
+
+let chatters = [];
+function renderChatters() {
+  const q = $('chFilter').value.trim().toLowerCase();
+  const list = q ? chatters.filter((n) => n.toLowerCase().includes(q)) : chatters;
+  $('chNames').innerHTML = list.map((n) => `<span>${esc(n)}</span>`).join('') || '<span class="empty">Personne</span>';
+}
+
+$('chattersBtn').onclick = async () => {
+  $('chFilter').value = '';
+  $('chCount').textContent = '';
+  $('chNote').textContent = 'Chargement…';
+  $('chNames').innerHTML = '';
+  $('chDlg').showModal();
+  try {
+    const r = await cmd('twitch.getChatters');
+    chatters = r.names;
+    $('chCount').textContent = `(${r.total})`;
+    $('chNote').textContent = r.partial && r.reason === 'twitch'
+      ? "Twitch n'est pas connecté : seules les personnes ayant écrit récemment sont listées."
+      : r.partial
+      ? "Liste partielle : seules les personnes qui ont écrit récemment. Pour la liste complète, reconnecte Twitch dans l'assistant de configuration (nouvelle autorisation requise)."
+      : r.truncated ? `Les ${r.names.length} premiers noms sur ${r.total}.` : '';
+    renderChatters();
+  } catch (e) { $('chNote').textContent = e.message; }
+};
+$('chFilter').oninput = renderChatters;
+$('chClose').onclick = () => $('chDlg').close();
+
+// ---------- mises à jour ----------
+
+// L'installation n'est jamais automatique (elle ferme l'app, donc coupe un live) :
+// la console propose, l'utilisateur décide.
+function renderUpdate() {
+  const u = st.update, b = $('updateBanner');
+  const text = {
+    available: () => `Mise à jour disponible : version ${u.version} (installée : ${u.current}).`,
+    downloading: () => `Téléchargement de la version ${u.version}… ${u.progress ?? 0} %`,
+    installing: () => `Installation de la version ${u.version} : l'application va redémarrer.`,
+    error: () => u.message || 'Mise à jour impossible.',
+  }[u?.state];
+  b.classList.toggle('hidden', !text);
+  if (!text) return;
+  b.classList.toggle('err', u.state === 'error');
+  $('updateText').textContent = text();
+  const btn = $('updateBtn');
+  btn.classList.toggle('hidden', !['available', 'error'].includes(u.state));
+  btn.textContent = u.state === 'error' ? 'Réessayer' : 'Installer maintenant';
+}
+
+$('updateBtn').onclick = async () => {
+  const live = st.obs.streaming;
+  if (live && !confirm('Un live est en cours : l’installation ferme l’application et le coupe côté service. Installer quand même ?')) return;
+  const r = await (await fetch(st.update?.state === 'error' ? '/api/update/check' : '/api/update/install', { method: 'POST', body: JSON.stringify({ force: live }) })).json();
+  if (!r.ok) toast(r.error);
+};
+
+$('checkUpdateBtn').onclick = async () => {
+  const r = await (await fetch('/api/update/check', { method: 'POST' })).json();
+  toast(r.ok ? 'Recherche en cours…' : r.error);
 };
 
 // ---------- téléphone & infos ----------

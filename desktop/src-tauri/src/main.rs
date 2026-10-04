@@ -130,29 +130,67 @@ fn open_service_page(app: &AppHandle, dir: &Path, _port: u16, path: &str) {
     }
 }
 
-// Vérifie (et installe) une mise à jour signée. Au démarrage : silencieux. À la
-// demande (menu) : le résultat s'affiche dans une petite page, sinon un clic
-// sur « Rechercher une mise à jour » ne donnerait aucun retour.
+// Mises à jour : l'app VÉRIFIE seule (au démarrage puis toutes les 6 h) mais
+// n'INSTALLE jamais sans demande explicite — l'installeur ferme l'app, ce qui
+// couperait un live en cours. L'état est publié dans update-status.json (lu
+// par le service Node, donc par la console et le téléphone), et les demandes
+// arrivent par update-request.json (écrit par le service) : la console s'ouvre
+// dans le navigateur, pas dans une fenêtre Tauri, et ne peut pas appeler l'app.
+static UPDATE_BUSY: AtomicBool = AtomicBool::new(false);
+
+fn write_status(dir: &Path, status: serde_json::Value) {
+    let _ = fs::write(dir.join("update-status.json"), status.to_string());
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+// À la demande (menu) : propose l'installation dans la console si une version
+// existe, sinon affiche le résultat dans une petite page — sans ça, un clic sur
+// « Rechercher une mise à jour » ne donnerait aucun retour.
 fn check_update(app: AppHandle, dir: PathBuf, manual: bool) {
     tauri::async_runtime::spawn(async move {
+        if UPDATE_BUSY.swap(true, Ordering::SeqCst) {
+            return;
+        }
         let current = app.package_info().version.to_string();
-        let message = match app.updater() {
-            Ok(updater) => match updater.check().await {
-                Ok(Some(update)) => {
-                    let version = update.version.clone();
-                    // L'installeur ferme l'app puis la relance ; le service Node s'arrête avec elle.
-                    match update.download_and_install(|_, _| {}, || {}).await {
-                        Ok(_) => format!("La version {version} est installée. L'application redémarre."),
-                        Err(e) => format!("La version {version} est disponible mais l'installation a échoué : {e}"),
-                    }
-                }
-                Ok(None) => format!("Tu utilises la dernière version ({current})."),
-                Err(e) => format!("Vérification impossible pour le moment : {e}"),
-            },
-            Err(e) => format!("Mises à jour indisponibles : {e}"),
-        };
-        let _ = fs::write(dir.join("updater.log"), format!("{message}\n"));
         if manual {
+            write_status(&dir, serde_json::json!({ "state": "checking", "current": current }));
+        }
+        let (status, message) = match app.updater() {
+            Ok(updater) => match updater.check().await {
+                Ok(Some(update)) => (
+                    serde_json::json!({ "state": "available", "current": current, "version": update.version, "notes": update.body, "checkedAt": now_ms() }),
+                    format!("La version {} est disponible.", update.version),
+                ),
+                Ok(None) => (
+                    serde_json::json!({ "state": "uptodate", "current": current, "checkedAt": now_ms() }),
+                    format!("Tu utilises la dernière version ({current})."),
+                ),
+                Err(e) => (
+                    serde_json::json!({ "state": "error", "current": current, "message": format!("Vérification impossible pour le moment : {e}") }),
+                    format!("Vérification impossible pour le moment : {e}"),
+                ),
+            },
+            Err(e) => (
+                serde_json::json!({ "state": "error", "current": current, "message": format!("Mises à jour indisponibles : {e}") }),
+                format!("Mises à jour indisponibles : {e}"),
+            ),
+        };
+        let available = status["state"] == "available";
+        write_status(&dir, status);
+        let _ = fs::write(dir.join("updater.log"), format!("{message}\n"));
+        UPDATE_BUSY.store(false, Ordering::SeqCst);
+        if manual {
+            if available {
+                let port = local_port(&dir);
+                open_service_page(&app, &dir, port, "/desktop#update");
+                return;
+            }
             let page = dir.join("update.html");
             let html = format!(
                 "<!doctype html><meta charset=\"utf-8\"><title>Mise à jour</title><body style=\"font-family:system-ui,sans-serif;background:#0d0d10;color:#eee;max-width:32rem;margin:4rem auto;padding:0 1rem\"><h2>Mise à jour</h2><p style=\"color:#9a9aa2;line-height:1.5\">{message}</p>"
@@ -160,6 +198,71 @@ fn check_update(app: AppHandle, dir: PathBuf, manual: bool) {
             if fs::write(&page, html).is_ok() {
                 open_url(&app, &page.to_string_lossy());
             }
+        }
+    });
+}
+
+// Télécharge puis installe la version disponible (demandé depuis la console ou
+// le téléphone). L'installeur ferme l'app puis la relance ; le service Node
+// s'arrête avec elle et le téléphone se reconnecte tout seul.
+fn install_update(app: AppHandle, dir: PathBuf) {
+    tauri::async_runtime::spawn(async move {
+        if UPDATE_BUSY.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let current = app.package_info().version.to_string();
+        let fail = |message: String| {
+            write_status(&dir, serde_json::json!({ "state": "error", "current": current, "message": message }));
+        };
+        match app.updater() {
+            Ok(updater) => match updater.check().await {
+                Ok(Some(update)) => {
+                    let version = update.version.clone();
+                    write_status(&dir, serde_json::json!({ "state": "downloading", "current": current, "version": version, "progress": 0 }));
+                    let (mut downloaded, mut last) = (0u64, -1i64);
+                    let result = update
+                        .download_and_install(
+                            |chunk, total| {
+                                downloaded += chunk as u64;
+                                if let Some(t) = total.filter(|t| *t > 0) {
+                                    let pct = (downloaded * 100 / t) as i64;
+                                    if pct != last {
+                                        last = pct;
+                                        write_status(&dir, serde_json::json!({ "state": "downloading", "current": current, "version": version, "progress": pct }));
+                                    }
+                                }
+                            },
+                            || write_status(&dir, serde_json::json!({ "state": "installing", "current": current, "version": version })),
+                        )
+                        .await;
+                    if let Err(e) = result {
+                        fail(format!("La version {version} est disponible mais l'installation a échoué : {e}"));
+                    }
+                }
+                Ok(None) => write_status(&dir, serde_json::json!({ "state": "uptodate", "current": current, "checkedAt": now_ms() })),
+                Err(e) => fail(format!("Vérification impossible pour le moment : {e}")),
+            },
+            Err(e) => fail(format!("Mises à jour indisponibles : {e}")),
+        }
+        UPDATE_BUSY.store(false, Ordering::SeqCst);
+    });
+}
+
+// Demandes écrites par le service Node (update-request.json), traitées puis supprimées.
+fn watch_update_requests(app: AppHandle, dir: PathBuf) {
+    thread::spawn(move || loop {
+        thread::sleep(Duration::from_secs(1));
+        let path = dir.join("update-request.json");
+        let Ok(raw) = fs::read_to_string(&path) else { continue };
+        let _ = fs::remove_file(&path);
+        let action = serde_json::from_str::<serde_json::Value>(&raw)
+            .ok()
+            .and_then(|v| v["action"].as_str().map(String::from))
+            .unwrap_or_default();
+        match action.as_str() {
+            "check" => check_update(app.clone(), dir.clone(), false),
+            "install" => install_update(app.clone(), dir.clone()),
+            _ => {}
         }
     });
 }
@@ -199,6 +302,9 @@ fn main() {
             // Vérification automatique 60 s après le démarrage, puis toutes les 6 h :
             // l'app tourne des jours entiers (démarrage avec Windows), et un réseau
             // absent au démarrage ne doit pas la priver de mises à jour (jamais bloquant).
+            // Elle ne fait que repérer une version : l'installation se demande ensuite.
+            write_status(&dir, serde_json::json!({ "state": "idle", "current": app.package_info().version.to_string() }));
+            watch_update_requests(app.handle().clone(), dir.clone());
             {
                 let handle = app.handle().clone();
                 let dir = dir.clone();

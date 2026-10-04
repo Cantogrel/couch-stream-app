@@ -46,7 +46,7 @@
   .scenes { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .5rem; }
   .scene { padding: .7rem .5rem; text-align: center; }
   .scene.current { border-color: var(--ok); color: var(--ok); font-weight: 700; }
-  .health { display: grid; grid-template-columns: repeat(6, 1fr); gap: .5rem; text-align: center; }
+  .health { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; text-align: center; }
   .health div { display: flex; flex-direction: column; gap: .15rem; }
   .health b { font-size: 1.05rem; }
   .health small { color: var(--dim); font-size: .7rem; }
@@ -65,6 +65,15 @@
   .tools button.danger:hover { color: var(--bad); }
   .chat-form { display: flex; gap: .5rem; margin-top: .6rem; }
   .chat-form input { flex: 1; padding: .55rem .7rem; border-radius: 8px; border: 1px solid var(--border); background: #101013; color: var(--fg); font: inherit; }
+  .banner { display: flex; align-items: center; gap: .8rem; padding: .6rem 1.2rem; background: #1f2a24; border-bottom: 1px solid var(--ok); font-size: .88rem; }
+  .banner span { flex: 1; }
+  .banner.err { background: #2a1717; border-color: var(--bad); }
+  .card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: .6rem; }
+  .card-head .card-title { margin: 0; }
+  .btn.small { padding: .25rem .65rem; font-size: .75rem; }
+  .names { max-height: 50vh; overflow-y: auto; display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .6rem; }
+  .names span { background: #101013; border: 1px solid var(--border); border-radius: 999px; padding: .15rem .6rem; font-size: .8rem; }
+  .names-filter { width: 100%; padding: .5rem .7rem; border-radius: 8px; border: 1px solid var(--border); background: #101013; color: var(--fg); font: inherit; }
   .empty { color: var(--dim); font-size: .85rem; text-align: center; margin: auto; padding: 1rem; }
 
   dialog { background: var(--card); color: var(--fg); border: 1px solid var(--border); border-radius: 14px; padding: 1.4rem 1.6rem; max-width: 460px; width: 92vw; }
@@ -95,10 +104,13 @@
     <span class="pill"><span class="dot" id="twDot"></span>Twitch</span>
     <span class="pill"><span class="dot" id="vbDot"></span>VB-Cable</span>
     <span class="pill"><span class="dot" id="phDot"></span><span id="phText">Téléphone</span></span>
+    <span class="pill hidden" id="vwPill" title="Spectateurs en ce moment">👁 <b id="vwText">–</b></span>
   </div>
   <span id="liveBadge" class="live-badge hidden">● EN DIRECT</span>
   <button class="btn" id="settingsBtn">Téléphone &amp; infos</button>
 </header>
+
+<div id="updateBanner" class="banner hidden"><span id="updateText"></span><button class="btn primary" id="updateBtn">Installer</button></div>
 
 <main>
   <div class="col">
@@ -129,19 +141,16 @@
     <div class="card">
       <div class="card-title">Santé du stream</div>
       <div class="health">
-        <div><b id="hDropped">–</b><small>frames perdues</small></div>
-        <div><b id="hTotal">–</b><small>frames totales</small></div>
-        <div><b id="hCong">–</b><small>congestion</small></div>
         <div><b id="hKbps">–</b><small>kb/s</small></div>
         <div><b id="hFps">–</b><small>fps</small></div>
-        <div><b id="hCpu">–</b><small>CPU OBS</small></div>
+        <div><b id="hCong">–</b><small>congestion</small></div>
       </div>
     </div>
   </div>
 
   <div class="col">
     <div class="card chat">
-      <div class="card-title">Chat</div>
+      <div class="card-head"><div class="card-title">Chat</div><button class="btn small" id="chattersBtn" type="button">👥 Connectés</button></div>
       <div class="chat-log" id="chatLog"><div class="empty" id="chatEmpty">En attente du chat Twitch…</div></div>
       <form class="chat-form" id="chatForm">
         <input id="chatInput" placeholder="Écrire dans le chat…" autocomplete="off">
@@ -161,9 +170,17 @@
   <div id="apkBox" class="hidden"></div>
   <div id="devBox"></div>
   <div class="row"><span>Téléphones connectés</span><b id="dlgPhones">0</b></div>
-  <div class="row"><span>Version du service</span><b id="dlgVersion">–</b></div>
+  <div class="row"><span>Version du service</span><span><b id="dlgVersion">–</b> <button class="btn small" id="checkUpdateBtn" type="button">Rechercher une mise à jour</button></span></div>
   <div style="display:flex;justify-content:space-between;margin-top:1rem"><button class="btn" id="copyReport">Copier le rapport de diagnostic</button><button class="btn" id="dlgClose">Fermer</button></div>
   <div id="reportMsg" style="font-size:.78rem;color:var(--dim);margin-top:.4rem;text-align:right"></div>
+</dialog>
+
+<dialog id="chDlg">
+  <h2>Connectés au chat <span id="chCount" style="color:var(--dim);font-weight:400"></span></h2>
+  <input class="names-filter" id="chFilter" placeholder="Filtrer…" autocomplete="off">
+  <p id="chNote"></p>
+  <div class="names" id="chNames"></div>
+  <div style="text-align:right;margin-top:1rem"><button class="btn" id="chClose">Fermer</button></div>
 </dialog>
 
 <div id="toast" class="hidden"></div>

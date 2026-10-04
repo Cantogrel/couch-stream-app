@@ -11,9 +11,18 @@ git push origin v0.1.1
 ```
 
 Les applications déjà installées vérifient `latest.json` 60 s après leur
-démarrage (et via « Rechercher une mise à jour » dans le menu de l'icône) et
-installent la mise à jour signée toute seule. Le PC sert ensuite le nouvel APK
-aux téléphones (console → « Téléphone & infos » → « Installer l'app »).
+démarrage, toutes les 6 h et via « Rechercher une mise à jour » (menu de l'icône,
+console, ou Réglages de l'app téléphone). **Rien ne s'installe sans accord** : une
+version disponible est proposée par un bandeau dans la console PC et dans l'app
+téléphone, et l'installation (qui ferme l'application Windows) est refusée en plein
+live côté téléphone, confirmée côté console.
+
+- **PC** : « Installer maintenant » télécharge l'installeur signé et le lance ;
+  l'application redémarre seule. Possible depuis la console ou depuis le téléphone.
+- **Téléphone** : dès que le PC est plus récent que l'app, un bandeau propose
+  « Mettre à jour » ; l'app télécharge l'APK servi par le PC et lance l'installeur
+  Android (confirmation système, et autorisation « applis inconnues » la 1re fois).
+  Ordre naturel : mettre à jour le PC d'abord, puis le téléphone.
 
 ## Avant de tagger
 
@@ -61,7 +70,9 @@ les secrets Actions), et les clés se récupèrent depuis le dépôt privé
 - L'installeur n'est pas signé par un certificat de code : SmartScreen affiche
   un avertissement (« Exécuter quand même »). Pour un usage grand public, prévoir
   Azure Trusted Signing ou un certificat OV.
-- L'APK n'est pas mis à jour automatiquement sur le téléphone : l'application
-  affiche un bandeau quand le PC est plus récent qu'elle, et la nouvelle version
-  se télécharge depuis la console PC. Comme la clé de signature reste la même,
-  Android l'installe **par-dessus** l'ancienne sans perdre les réglages.
+- L'APK ne s'installe jamais sans l'écran de confirmation d'Android (imposé par le
+  système). Comme la clé de signature reste la même, il s'installe **par-dessus**
+  l'ancienne sans perdre les réglages.
+- Une app téléphone antérieure à ces fonctions ne les propose pas : une dernière
+  installation manuelle de l'APK (console → « Téléphone & infos » → « Installer
+  l'app ») est nécessaire pour qu'elle sache ensuite se mettre à jour seule.

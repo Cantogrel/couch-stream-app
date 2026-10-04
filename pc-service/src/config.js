@@ -15,8 +15,9 @@ export const DEFAULT_TWITCH_CLIENT_ID = 'uo0n5gaqqlgm26o089d5cam2jk4u6g';
 // encore est nettoyé, sinon elle primerait sur le Client ID public ci-dessus.
 const RETIRED_CLIENT_ID = '6x9xjpr9oltl5amsoop7ixaedupu20';
 
-// Scopes demandés à la connexion Twitch : chat + modération des messages/bans.
-export const TWITCH_SCOPES = ['chat:read', 'chat:edit', 'moderator:manage:banned_users', 'moderator:manage:chat_messages'];
+// Scopes demandés à la connexion Twitch : chat + modération des messages/bans
+// + liste des personnes connectées au chat (moderator:read:chatters).
+export const TWITCH_SCOPES = ['chat:read', 'chat:edit', 'moderator:manage:banned_users', 'moderator:manage:chat_messages', 'moderator:read:chatters'];
 
 // Aucune variable n'est plus obligatoire : c'est l'assistant de premier
 // lancement (/setup) qui renseigne OBS et Twitch. Seul le token local est

@@ -11,6 +11,7 @@ import android.media.AudioAttributes;
 import android.media.RingtoneManager;
 import android.net.Uri;
 import android.os.Build;
+import android.view.WindowManager;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
@@ -50,6 +51,19 @@ public class KeepAlivePlugin extends Plugin {
   @PluginMethod
   public void stop(PluginCall call) {
     getContext().stopService(new Intent(getContext(), KeepAliveService.class));
+    call.resolve();
+  }
+
+  // Écran qui ne se met pas en veille tant que l'app est au premier plan
+  // (FLAG_KEEP_SCREEN_ON n'agit que sur une fenêtre visible : pas de wake lock
+  // en arrière-plan, la mise en veille normale reprend dès qu'on quitte l'app).
+  @PluginMethod
+  public void setKeepScreenOn(PluginCall call) {
+    boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", true));
+    getActivity().runOnUiThread(() -> {
+      if (enabled) getActivity().getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+      else getActivity().getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    });
     call.resolve();
   }
 

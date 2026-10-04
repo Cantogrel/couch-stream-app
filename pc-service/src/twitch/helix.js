@@ -40,8 +40,25 @@ export class HelixClient {
   }
 
   async getStreamInfo() {
+    if (!this.broadcasterId) return null;
     const data = await this._request(`/streams?user_id=${this.broadcasterId}`);
     return data.data[0] || null; // null = hors ligne
+  }
+
+  // Personnes connectées au chat (pas seulement celles qui écrivent). Exige le
+  // scope moderator:read:chatters : absent des jetons créés avant cette
+  // fonction, d'où l'erreur typée `missingScope` (repli côté appelant).
+  // `first` borne le volume : 1000 est le maximum d'une page Twitch.
+  async getChatters({ first = 1000 } = {}) {
+    try {
+      const data = await this._request(
+        `/chat/chatters?broadcaster_id=${this.broadcasterId}&moderator_id=${this.moderatorId}&first=${first}`
+      );
+      return { total: data.total, logins: data.data.map((c) => c.user_name || c.user_login) };
+    } catch (err) {
+      if (/-> (401|403):/.test(err.message)) throw Object.assign(new Error('scope moderator:read:chatters manquant'), { missingScope: true });
+      throw err;
+    }
   }
 
   async deleteChatMessage(messageId) {

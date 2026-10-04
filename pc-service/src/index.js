@@ -13,6 +13,8 @@ import { TwitchService } from './twitch/twitchService.js';
 import { VbCableInstaller } from './vbcable.js';
 import { Setup } from './setup.js';
 import { VERSION } from './version.js';
+import { ViewerStats } from './twitch/viewerStats.js';
+import { UpdateRelay } from './updater.js';
 
 async function main() {
   const obs = new ObsController(config.obs);
@@ -40,7 +42,9 @@ async function main() {
   const vbcable = new VbCableInstaller({ pcmPlayer });
   let server;
   const setup = new Setup({ obs, twitchService: twitch, deviceAuth, vbcable, getPhoneCount: () => server.getStatus().phones });
-  server = new LocalWsServer({ port: config.localWs.port, token: config.localWs.token, obs, chat, helix, pcmPlayer, service: { version: VERSION }, devices, identity, setup, twitch });
+  const viewers = new ViewerStats({ helix, hasListeners: () => server.authedClients.size > 0 });
+  const updater = new UpdateRelay();
+  server = new LocalWsServer({ port: config.localWs.port, token: config.localWs.token, obs, chat, helix, pcmPlayer, service: { version: VERSION }, devices, identity, setup, twitch, viewers, updater });
   await server.start();
   const stopAdvertising = advertise({ identity, port: config.localWs.port });
 

@@ -125,7 +125,7 @@ async function readBody(req, limit = 4096) {
   return raw ? JSON.parse(raw) : {};
 }
 
-export function createStaticServer({ getStatus, getDiagnostics, setup, launchObs, devices, identity, listDevices, revokeDevice, service }) {
+export function createStaticServer({ getStatus, getDiagnostics, setup, launchObs, devices, identity, listDevices, revokeDevice, service, getUpdate, checkUpdate, installUpdate }) {
   return createServer(async (req, res) => {
     const urlPath = req.url === '/' ? '/index.html' : req.url === '/desktop' ? '/desktop.html' : req.url === '/setup' ? '/setup.html' : req.url.split('?')[0];
 
@@ -171,6 +171,15 @@ export function createStaticServer({ getStatus, getDiagnostics, setup, launchObs
       if (urlPath.startsWith('/api/devices/') && req.method === 'DELETE') {
         const id = decodeURIComponent(urlPath.slice('/api/devices/'.length));
         return json({ ok: revokeDevice(id) });
+      }
+      if (urlPath === '/api/update' && req.method === 'GET') return json(getUpdate());
+      if (urlPath === '/api/update/check' && req.method === 'POST') {
+        try { checkUpdate(); return json({ ok: true }); } catch (err) { return json({ ok: false, error: err.message }); }
+      }
+      if (urlPath === '/api/update/install' && req.method === 'POST') {
+        let body = {};
+        try { body = await readBody(req); } catch { /* corps invalide : traité comme vide */ }
+        try { installUpdate({ force: Boolean(body.force) }); return json({ ok: true }); } catch (err) { return json({ ok: false, error: err.message }); }
       }
       if (urlPath === '/api/obs/launch' && req.method === 'POST') return json(await launchObs());
       if (urlPath.startsWith('/api/setup/')) {

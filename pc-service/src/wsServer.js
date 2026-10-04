@@ -13,8 +13,10 @@ import { ENV_PATH } from './paths.js';
 const AUTH_TIMEOUT_MS = 5000;
 
 export class LocalWsServer {
-  constructor({ port, token, obs, chat, helix, pcmPlayer, service, devices, identity, setup, twitch }) {
+  constructor({ port, token, obs, chat, helix, pcmPlayer, service, devices, identity, setup, twitch, viewers, updater }) {
     this.setup = setup;
+    this.viewers = viewers;
+    this.updater = updater;
     this.twitch = twitch;
     this.devices = devices;
     this.identity = identity;
@@ -37,7 +39,7 @@ export class LocalWsServer {
   async start() {
     // Même port pour les fichiers statiques (public/, testable depuis le
     // téléphone en HTTP) et le WebSocket (upgrade sur le même serveur HTTP).
-    this.httpServer = createStaticServer({ getStatus: () => this.getStatus(), setup: this.setup, getDiagnostics: () => buildReport(this), launchObs, devices: this.devices, identity: this.identity, listDevices: () => this.listDevices(), revokeDevice: (id) => this.revokeDevice(id), service: this.service });
+    this.httpServer = createStaticServer({ getStatus: () => this.getStatus(), setup: this.setup, getDiagnostics: () => buildReport(this), launchObs, devices: this.devices, identity: this.identity, listDevices: () => this.listDevices(), revokeDevice: (id) => this.revokeDevice(id), service: this.service, getUpdate: () => this.updater.status(), checkUpdate: () => this.checkUpdate(), installUpdate: (opts) => this.installUpdate(opts) });
     this.wss = new WebSocketServer({ server: this.httpServer });
     this.wss.on('error', () => {}); // les erreurs d'écoute sont traitées ci-dessous
     await this._listenWithFallback();
@@ -51,7 +53,14 @@ export class LocalWsServer {
     // Relaie les évènements OBS et le chat Twitch vers tous les clients
     // authentifiés (dashboard, chat live, notifications).
     this.obs.on('event', (payload) => this._broadcast({ type: 'event', ...payload }));
-    this.obs.on('status', (status) => this._broadcast({ type: 'event', name: 'obs.connection', ...status }));
+    this.obs.on('status', (status) => {
+      this._broadcast({ type: 'event', name: 'obs.connection', ...status });
+      // État complet à chaque (re)connexion ou perte d'OBS : les clients
+      // rafraîchissent scènes/micro ou vident l'affichage sans rien redemander.
+      this.obs.getState().then((state) => this._broadcast({ type: 'state', ...state })).catch(() => {});
+    });
+    this.viewers.on('change', (v) => this._broadcast({ type: 'event', name: 'twitch.viewers', ...v }));
+    this.updater.on('change', (u) => this._broadcast({ type: 'event', name: 'update.status', ...u }));
     this.chat.on('message', (msg) => this._broadcast({ type: 'event', name: 'chat.message', ...msg }));
     this.chat.on('status', (status) => { this.twitchConnected = status.connected; });
     this.chat.on('status', (status) => this._broadcast({ type: 'event', name: 'twitch.connection', ...status }));
@@ -68,6 +77,8 @@ export class LocalWsServer {
       twitch: { connected: this.twitchConnected, state: this.twitch.status().state, login: this.twitch.status().login },
       vbcable: { found: Boolean(this.pcmPlayer.device), label: this.pcmPlayer.device?.label ?? null },
       phones: [...this.authedClients].filter((ws) => !ws.isLocal).length,
+      viewers: this.viewers.value,
+      update: this.updater.status(),
     };
   }
 
@@ -214,12 +225,17 @@ LOCAL_WS_TOKEN=${token}
           const state = await this.obs.getState();
           ws.send(JSON.stringify({ type: 'state', ...state }));
         } catch (err) {
+          // OBS déconnecté n'est pas une erreur (getState renvoie alors un état
+          // vide) : seul un vrai échec de requête est signalé.
           ws.send(JSON.stringify({ type: 'error', error: `état OBS indisponible: ${err.message}` }));
         }
         // Sans ça, un client qui recharge la page perd tout le chat déjà
         // affiché (retour utilisateur Phase 3) — rejoué une fois à la
         // connexion, pas à chaque commande.
         ws.send(JSON.stringify({ type: 'chat-history', messages: this.chat.getHistory() }));
+        ws.send(JSON.stringify({ type: 'event', name: 'twitch.viewers', ...this.viewers.value }));
+        ws.send(JSON.stringify({ type: 'event', name: 'update.status', ...this.updater.status() }));
+        this.viewers.refresh();
       } else {
         ws.close(4003, 'auth invalide');
       }
@@ -274,6 +290,26 @@ LOCAL_WS_TOKEN=${token}
     }
   }
 
+  checkUpdate() {
+    this.updater.check();
+  }
+
+  // Installer une mise à jour ferme l'application Windows (donc OBS reste, mais
+  // le service et le chat de l'app s'interrompent) : jamais en plein direct sans
+  // accord explicite (`force`, demandé par la console après confirmation).
+  installUpdate({ force = false } = {}) {
+    if (this.obs.streaming && !force) throw new Error('Un live est en cours : termine-le avant de mettre à jour.');
+    this.updater.install();
+  }
+
+  // Personnes connectées au chat, triées. Borné pour rester léger côté téléphone.
+  async _chatters() {
+    const recent = [...new Set(this.chat.getHistory().map((m) => m.displayName))];
+    const { total, names, partial, reason } = await this.viewers.chatters(recent);
+    const sorted = [...names].sort((a, b) => a.localeCompare(b, 'fr', { sensitivity: 'base' }));
+    return { total: total ?? sorted.length, names: sorted.slice(0, 500), truncated: sorted.length > 500, partial, reason: reason ?? null };
+  }
+
   async _runCommand(action, payload) {
     try {
       const data = await this._dispatch(action, payload);
@@ -310,6 +346,20 @@ LOCAL_WS_TOKEN=${token}
       }
       case 'audio.getSettings':
         return { jitterBufferMs: this.pcmPlayer.jitterBufferMs };
+      case 'obs.launch': {
+        const r = await launchObs();
+        if (!r.ok) throw new Error(r.error);
+        return r;
+      }
+      case 'twitch.getChatters':
+        return this._chatters();
+      case 'update.getStatus':
+        return this.updater.status();
+      case 'update.check':
+        return this.checkUpdate();
+      case 'update.install':
+        // Depuis le téléphone : jamais de forçage, un live en cours reste prioritaire.
+        return this.installUpdate({ force: false });
       case 'obs.getScreenshot':
         return { dataUrl: await this.obs.getScreenshot(Math.min(Math.max(Number(payload?.width) || 480, 160), 1280)) };
 
