@@ -328,6 +328,18 @@ main {
   object-fit: cover;
 }
 
+/* Téléphone, onglet Chat : la page ne défile pas, la barre « connectés » reste
+   fixe en haut (fond identique au chat) et seule la liste défile — les messages
+   s'empilent depuis le bas, juste au-dessus du champ de saisie. */
+@media (max-width: 899px) {
+  main:has(#tab-chat.active) { overflow: hidden; }
+  #tab-chat.active { display: flex; flex-direction: column; height: 100%; }
+  #tab-chat .chat-head { background: var(--bg); margin-bottom: 0; padding-bottom: .6rem; flex-shrink: 0; position: relative; z-index: 2; }
+  #tab-chat .chat-log { flex: 1; min-height: 0; height: auto; }
+  #tab-chat .chat-log > :first-child { margin-top: auto; }
+  #tab-chat .chat-input-row { flex-shrink: 0; }
+}
+
 /* Affichage PC (navigateur large) : la même UI, mais en colonnes, onglets en
    haut, contenu centré — le layout téléphone reste inchangé en dessous. */
 @media (min-width: 900px) {

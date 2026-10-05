@@ -226,7 +226,8 @@ function handleMessage(msg) {
       // Le PC oublie le buffer de gigue à son redémarrage : on réapplique le
       // choix mémorisé du téléphone à chaque connexion.
       if (app.settings.jitterMs !== 30) cmd('audio.setJitterBuffer', { ms: app.settings.jitterMs }).catch(() => {});
-      startKeepAlive();
+      keepAliveOn = null;
+      syncKeepAlive();
       break;
     case 'state':
       applyState(msg);
@@ -322,8 +323,9 @@ function handleEvent(msg) {
       const was = app.twitchOk;
       app.twitchOk = msg.connected;
       if (!msg.connected && was !== false) {
-        toast('Twitch IRC déconnecté côté PC');
-        alertDisconnect('Twitch');
+        scheduleDisconnectAlert('Twitch', () => app.twitchOk === false, 'Twitch IRC déconnecté côté PC');
+      } else if (msg.connected) {
+        cancelDisconnectAlert('Twitch');
       }
       break;
     }
@@ -415,10 +417,12 @@ function onObsConnection(connected) {
   if (!connected && was === true) {
     // Une seule fois, à la perte (le PC n'émet plus d'évènement à chaque nouvel
     // essai) ; la suite se lit sur le bouton Démarrer et dans le flux.
-    toast('OBS déconnecté côté PC');
-    alertDisconnect('OBS');
+    scheduleDisconnectAlert('OBS', () => app.obs.obsConnected === false, 'OBS déconnecté côté PC');
   }
-  if (connected) onObsBack();
+  if (connected) {
+    cancelDisconnectAlert('OBS');
+    onObsBack();
+  }
   renderDashboard();
 }
 
@@ -482,8 +486,29 @@ function checkHealth(h) {
   notify(NOTIF_ID_HEALTH, 'Stream : problème de connexion', problems.join(' · '));
 }
 
-function alertDisconnect(what) {
-  if (!app.settings.notifDisconnect || !app.obs.streaming) return;
+// Délai de grâce : Twitch IRC et OBS se reconnectent seuls en quelques secondes,
+// une coupure brève ne vaut pas une alerte — seule une perte qui dure en vaut une.
+const DISCONNECT_GRACE_MS = 10000;
+const disconnectTimers = {};
+
+function scheduleDisconnectAlert(what, stillDown, toastText) {
+  clearTimeout(disconnectTimers[what]);
+  const wasStreaming = app.obs.streaming; // OBS remet streaming à faux en se déconnectant
+  disconnectTimers[what] = setTimeout(() => {
+    delete disconnectTimers[what];
+    if (!stillDown()) return;
+    toast(toastText);
+    alertDisconnect(what, wasStreaming);
+  }, DISCONNECT_GRACE_MS);
+}
+
+function cancelDisconnectAlert(what) {
+  clearTimeout(disconnectTimers[what]);
+  delete disconnectTimers[what];
+}
+
+function alertDisconnect(what, wasStreaming) {
+  if (!app.settings.notifDisconnect || !wasStreaming) return;
   notify(NOTIF_ID_DISCONNECT, `${what} déconnecté`, `${what} a perdu la connexion pendant le live.`);
 }
 
@@ -749,6 +774,7 @@ function renderViewers() {
   if (show) parts.push(`👁 ${v.viewers} spectateur${v.viewers > 1 ? 's' : ''}`);
   if (wsOpen() && v && v.chatters != null) parts.push(`👥 ${v.chatters} dans le chat`);
   $('chatStats').textContent = parts.length ? parts.join(' · ') : (v && !v.live ? 'Hors ligne' : '–');
+  syncKeepAlive();
 }
 
 let chattersAll = [];
@@ -808,7 +834,32 @@ $('chatForm').addEventListener('submit', (e) => {
 // vouloir que le chat/micro restent fiables en arrière-plan.
 function startKeepAlive() {
   if (!isNative() || !window.Capacitor.Plugins.KeepAlive) return;
-  window.Capacitor.Plugins.KeepAlive.start().catch((err) => log('[keepalive] échec: ' + err.message));
+  window.Capacitor.Plugins.KeepAlive.start().catch((err) => {
+    log('[keepalive] échec: ' + err.message);
+    keepAliveOn = null; // retentera au prochain sync (retour au premier plan)
+  });
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') syncKeepAlive();
+});
+
+function stopKeepAlive() {
+  if (!isNative() || !window.Capacitor.Plugins.KeepAlive) return;
+  window.Capacitor.Plugins.KeepAlive.stop().catch(() => {});
+}
+
+// Le service (et sa notification persistante) ne tourne que si le stream est
+// en direct ou si le micro est en cours d'envoi — hors live, rien à garder
+// vivant en arrière-plan.
+let keepAliveOn = null;
+function syncKeepAlive() {
+  // Sans condition sur le WebSocket : une micro-coupure Wi-Fi ne doit pas
+  // arrêter le service (le relancer depuis l'arrière-plan peut être refusé).
+  const want = !!(app.mic.wanted || (app.viewers && app.viewers.live));
+  if (want === keepAliveOn) return;
+  keepAliveOn = want;
+  if (want) startKeepAlive(); else stopKeepAlive();
 }
 
 // ---------- QR de pairing ----------
@@ -1337,11 +1388,13 @@ async function startMicSend() {
   app.mic.wanted = true;
   app.mic.retryCount = 0;
   if (!(await openMicSession())) app.mic.wanted = false;
+  syncKeepAlive();
 }
 
 // Arrêt voulu par l'utilisateur.
 function stopMicSend() {
   app.mic.wanted = false;
+  syncKeepAlive();
   clearTimeout(app.mic.retryTimer);
   app.mic.retryTimer = null;
   stopMicWatchdog();

@@ -91,8 +91,11 @@ export class TwitchChat extends EventEmitter {
       this.emit('status', { connected: false, reason });
     });
 
+    // Émis aussi à chaque reconnexion automatique de tmi.js (sinon les clients
+    // gardent « déconnecté » après une micro-coupure).
+    this.client.on('connected', () => this.emit('status', { connected: true }));
+
     await this.client.connect();
-    this.emit('status', { connected: true });
   }
 
   async _reconnectWithFreshToken() {

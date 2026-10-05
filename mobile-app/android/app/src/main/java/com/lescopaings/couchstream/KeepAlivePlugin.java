@@ -40,12 +40,19 @@ public class KeepAlivePlugin extends Plugin {
   @PluginMethod
   public void start(PluginCall call) {
     Intent intent = new Intent(getContext(), KeepAliveService.class);
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      getContext().startForegroundService(intent);
-    } else {
-      getContext().startService(intent);
+    try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        getContext().startForegroundService(intent);
+      } else {
+        getContext().startService(intent);
+      }
+      call.resolve();
+    } catch (RuntimeException e) {
+      // Android 12+ refuse de lancer un service de premier plan depuis
+      // l'arrière-plan : on rejette proprement, le JS retentera au retour
+      // au premier plan.
+      call.reject(e.getMessage());
     }
-    call.resolve();
   }
 
   @PluginMethod

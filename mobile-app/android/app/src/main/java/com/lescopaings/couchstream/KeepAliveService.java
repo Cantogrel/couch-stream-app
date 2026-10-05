@@ -36,11 +36,15 @@ public class KeepAliveService extends Service {
   public int onStartCommand(Intent intent, int flags, int startId) {
     startForeground(NOTIFICATION_ID, buildNotification(), foregroundServiceType());
     acquireWakeLock();
-    // START_STICKY : si Android tue quand même le process (mémoire très
-    // basse), il retente de relancer le service — sans garantie stricte,
-    // mais c'est le comportement le plus proche de "reste actif" possible.
-    return START_STICKY;
+    // START_NOT_STICKY : un service relancé seul par Android (process tué,
+    // app fermée) referait apparaître la notification sans que la WebView —
+    // donc le chat/micro — tourne derrière. Le JS le redémarre quand il faut.
+    return START_NOT_STICKY;
   }
+
+  // Pas de onTaskRemoved : glisser l'app hors des récentes ne doit PAS couper
+  // le service pendant un live, le process (WebSocket, chat, micro) continue
+  // grâce à lui. C'est le JS qui l'arrête dès que le live / le micro se termine.
 
   @Override
   public void onDestroy() {
@@ -90,7 +94,7 @@ public class KeepAliveService extends Service {
     NotificationChannel channel = new NotificationChannel(
       CHANNEL_ID, "Couch Stream App actif", NotificationManager.IMPORTANCE_LOW
     );
-    channel.setDescription("Notification persistante pendant que le micro ou le chat sont actifs en arrière-plan.");
+    channel.setDescription("Notification persistante pendant le live ou l'envoi du micro, pour garder le chat et le micro actifs en arrière-plan.");
     channel.setShowBadge(false);
     nm.createNotificationChannel(channel);
   }
